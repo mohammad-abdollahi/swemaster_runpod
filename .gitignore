@@ -1,0 +1,42 @@
+# Claude Code state: keep transcript + memory only, drop secrets/locks/etc.
+.claude/*
+!.claude/projects/
+.claude/projects/*/memory/.gitkeep
+!.claude/projects/*/
+!.claude/projects/*/*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build / dist
+build/
+dist/
+*.whl
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs and training artifacts (kept on /workspace, not in repo)
+*.log
+train_output/
+train_output_rollout/
+tensorboard_log/
+swe_train_logger/
+outputs/
+
+# r2egym .egg-info — pip install -e regenerates this; should not be tracked
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# External: verl is cloned from github.com/volcengine/verl @ v0.5.0; not our code.
+# It is documented in SETUP_NOTES.md and DeepSWE_RL/rllm/.gitmodules.
+DeepSWE_RL/rllm/verl/
