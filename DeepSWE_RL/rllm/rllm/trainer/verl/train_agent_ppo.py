@@ -74,10 +74,16 @@ def train_agent(config, agent_class=None, env_class=None, agent_args=None, env_a
     from omegaconf import OmegaConf
     import sys
     
-    # sys.path.insert(0, "/code/sunshuang/data_pipeline/R2E-Gym-fork_sim/src")
-    sys.path.insert(0, "./R2E-Gym/src")
-    # sys.path.insert(0, "/code/songhuatong/dockerllm_rl/rllm/verl")
-    sys.path.insert(0, "./DeepSWE_RL/rllm/verl")
+    # Resolve source dirs absolutely. Falls back to relative paths if no
+    # RLLM_PROJECT_ROOT is set, matching the original upstream layout.
+    _project_root = os.environ.get("RLLM_PROJECT_ROOT")
+    if _project_root:
+        sys.path.insert(0, os.path.join(_project_root, "R2E-Gym/src"))
+        sys.path.insert(0, os.path.join(_project_root, "DeepSWE_RL/rllm/verl"))
+        sys.path.insert(0, os.path.join(_project_root, "DeepSWE_RL/rllm"))
+    else:
+        sys.path.insert(0, "./R2E-Gym/src")
+        sys.path.insert(0, "./DeepSWE_RL/rllm/verl")
 
     print("===="*100)
     import sys
