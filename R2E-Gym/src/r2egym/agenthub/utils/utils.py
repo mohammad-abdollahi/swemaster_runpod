@@ -11,7 +11,9 @@ from datetime import datetime
 from fire import Fire
 from r2egym.commit_models.diff_classes import ParsedCommit
 import numpy as np
-from huggingface_hub import create_repo, upload_folder, HfFolder
+from huggingface_hub import create_repo, upload_folder
+# HfFolder was removed in huggingface_hub 1.0+. It was imported here but never
+# used. If token management is needed, switch to huggingface_hub.get_token().
 import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import subprocess

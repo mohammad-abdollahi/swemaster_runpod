@@ -25,6 +25,12 @@ export TOKENIZERS_PARALLELISM=true
 export NCCL_DEBUG=WARN
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
+# Use parent venv directly: /workspace/venv already has every package the
+# upstream runtime_env pip list pins. Cloning the venv into /tmp/ray and then
+# pip-installing local wheels by relative path takes ~5min, then fails
+# because Ray resolves './swebench_fork_*.whl' from a different cwd.
+# See the docstring on run_ppo_agent in rllm.trainer.verl.train_agent_ppo.
+export RLLM_USE_PARENT_VENV=1
 
 # rllm package is not installed; expose it via PYTHONPATH
 export PYTHONPATH=./DeepSWE_RL/rllm:./R2E-Gym/src:${PYTHONPATH:-}

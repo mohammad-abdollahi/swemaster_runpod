@@ -23,15 +23,42 @@ def main(config):
 
 def run_ppo_agent(config):
     if not ray.is_initialized():
-        # this is for local ray cluster
-        ray.init(runtime_env={"pip": ["sentence_transformers",'polars',"swebench==3.0.2","dm-tree","gym>=0.26.2","kubernetes>=32.0.1","fire",
-        "./swebench_fork_swegym-2.0.13-py3-none-any.whl",
-        "./swebench_fork_swerebench-4.0.3-py3-none-any.whl",
-        "./swesmith-0.0.7-py3-none-any.whl","simple-parsing>=0.1.6",
-        "together>=1.3.5","markdown>=3.7","pexpect>=4.9.0","libtmux>=0.40.1","bashlex>=0.18","google-cloud-aiplatform>=1.77.0","litellm>=1.58.2",
-        "seaborn>=0.13.2","orjson>=3.10.18","gpustat>=1.1.1"],
-                "working_dir": "./DeepSWE_RL/rllm/verl",
-            "env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "PYTHONPATH": "./DeepSWE_RL/rllm", "WANDB_API_KEY": "xx"}})
+        # RLLM_USE_PARENT_VENV=1 skips the pip-install runtime_env so Ray workers
+        # use the parent process's venv directly. The upstream pip list pins local
+        # wheels by relative path (`./swebench_fork_*-py3-none-any.whl`), which
+        # Ray resolves from its own runtime_resources/exec_cwd — those files do
+        # not exist there, so pip fails. When the parent venv already has every
+        # package (the case for /workspace/venv after the documented install),
+        # the runtime_env clone is also pure wasted time and disk.
+        if os.environ.get("RLLM_USE_PARENT_VENV") == "1":
+            # Use absolute paths so workers spawned with a different cwd still
+            # resolve the rllm/verl/r2egym source trees.
+            project_root = os.environ.get(
+                "RLLM_PROJECT_ROOT", "/workspace/swemaster_runpod"
+            )
+            ray.init(runtime_env={
+                "env_vars": {
+                    "TOKENIZERS_PARALLELISM": os.environ.get("TOKENIZERS_PARALLELISM", "true"),
+                    "NCCL_DEBUG": os.environ.get("NCCL_DEBUG", "WARN"),
+                    "PYTHONPATH": (
+                        f"{project_root}/DeepSWE_RL/rllm:"
+                        f"{project_root}/DeepSWE_RL/rllm/verl:"
+                        f"{project_root}/R2E-Gym/src:"
+                        + os.environ.get("PYTHONPATH", "")
+                    ),
+                    "WANDB_MODE": os.environ.get("WANDB_MODE", "disabled"),
+                    "RLLM_PROJECT_ROOT": project_root,
+                },
+            })
+        else:
+            ray.init(runtime_env={"pip": ["sentence_transformers",'polars',"swebench==3.0.2","dm-tree","gym>=0.26.2","kubernetes>=32.0.1","fire",
+            "./swebench_fork_swegym-2.0.13-py3-none-any.whl",
+            "./swebench_fork_swerebench-4.0.3-py3-none-any.whl",
+            "./swesmith-0.0.7-py3-none-any.whl","simple-parsing>=0.1.6",
+            "together>=1.3.5","markdown>=3.7","pexpect>=4.9.0","libtmux>=0.40.1","bashlex>=0.18","google-cloud-aiplatform>=1.77.0","litellm>=1.58.2",
+            "seaborn>=0.13.2","orjson>=3.10.18","gpustat>=1.1.1"],
+                    "working_dir": "./DeepSWE_RL/rllm/verl",
+                "env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "PYTHONPATH": "./DeepSWE_RL/rllm", "WANDB_API_KEY": "xx"}})
 
     # output_log = "./rl_env_no_uv_new.txt"
     # print(ray.get(check_worker_env.remote(output_log)))
