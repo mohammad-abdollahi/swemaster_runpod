@@ -100,8 +100,14 @@ DEFAULT_NAMESPACE = "default"
 DOCKER_PATH = "/root/.venv/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 LSP_DOCKER_PATH = "/opt/miniconda3/envs/testbed/bin:/opt/miniconda3/condabin:/opt/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-DOCKER_TLS_VERIFY = "1"
-DOCKER_CERT_PATH = "pem_saved_path_including_ca.pem_cert.pem_key.pem" # Path for PEM storage; optional and can be removed if not needed.
+# These were previously hard-coded to non-empty placeholder values, which made
+# docker.from_env() raise TLSParameterError on any host that wasn't set up with
+# a real TLS cert at the placeholder path (e.g. RunPod). They are now read from
+# the process environment and default to empty, which preserves the docker SDK
+# default behaviour (talk to the local daemon over the unix socket / DOCKER_HOST
+# env var, no TLS) unless the user explicitly opts in.
+DOCKER_TLS_VERIFY = os.environ.get("DOCKER_TLS_VERIFY", "")
+DOCKER_CERT_PATH = os.environ.get("DOCKER_CERT_PATH", "")
 
 
 base_dir = Path("./R2E-Gym/test_spec_cache")
@@ -123,6 +129,41 @@ def load_from_json(filename):
     with open(filename, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return TestSpec(**data)
+
+##############################################################################
+# Local backend support
+##############################################################################
+# Root directory under which each LocalRuntime task gets its own sandbox.
+# Override with R2EGYM_LOCAL_ROOT.
+LOCAL_SANDBOX_ROOT = os.environ.get("R2EGYM_LOCAL_ROOT", "/tmp/r2egym_local")
+
+
+class _LocalContainer:
+    """Minimal stand-in for a docker.models.containers.Container.
+
+    Lets code that does `if self.container:` / accesses `self.container.id`
+    keep working when the local backend is in use, without pulling in the
+    docker SDK.
+    """
+
+    def __init__(self, container_id: str, workdir: str):
+        self.id = container_id
+        self.workdir = workdir
+        self.status = "running"
+
+    def start(self):
+        self.status = "running"
+
+    def stop(self):
+        self.status = "exited"
+
+    def remove(self):
+        # Caller is responsible for cleaning the workdir; we just flip state.
+        self.status = "removed"
+
+    def __repr__(self):
+        return f"_LocalContainer(id={self.id!r}, workdir={self.workdir!r}, status={self.status!r})"
+
 
 ##############################################################################
 # Docker runtime
@@ -150,14 +191,23 @@ class DockerRuntime(ExecutionEnvironment):
     ):
         # check if ds is provided (required for all dockers moving forward)
         assert ds, f"Dataset not provided for docker image: {docker_image}"
-        assert backend in ["docker", "kubernetes"], f"Invalid backend: {backend}"
+        # "local" runs commands directly on the host in a per-task sandbox dir;
+        # no docker daemon and no kubeconfig required. See _start_local_sandbox.
+        assert backend in ["docker", "kubernetes", "local"], f"Invalid backend: {backend}"
+        # Allow R2EGYM_FORCE_LOCAL_BACKEND=1 to coerce any caller into the local
+        # path without having to thread the backend kwarg through the rllm
+        # config (useful on pods where docker is unavailable).
+        if os.environ.get("R2EGYM_FORCE_LOCAL_BACKEND", "") == "1":
+            backend = "local"
         if logger is None:
-            if self.backend == "docker":
+            if backend == "docker":
                 logger_name = "DockerRuntime"
-            elif self.backend == "kubernetes":
+            elif backend == "kubernetes":
                 logger_name = "KubernetesRuntime"
+            elif backend == "local":
+                logger_name = "LocalRuntime"
             else:
-                raise ValueError(f"Invalid backend: {self.backend}")
+                raise ValueError(f"Invalid backend: {backend}")
             self.logger = get_logger(logger_name)  # Pass the module name for clarity
         else:
             self.logger = logger
@@ -275,18 +325,21 @@ class DockerRuntime(ExecutionEnvironment):
 
 
         self.ip = ip
-        self.docker_host = r"tcp://" + self.ip + r":2375"
-        custom_env = {
-            'DOCKER_HOST': self.docker_host, 
-            'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY, 
-            'DOCKER_CERT_PATH': DOCKER_CERT_PATH, 
-            # 'DOCKER_API_VERSION': '1.40' 
-        }
-        print("=docker-ip="*20)
-        print(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
-        self.logger.info(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
+        # Build the docker daemon address only if we actually have one. With the
+        # local backend, `ip` is allowed to be None.
+        self.docker_host = (r"tcp://" + self.ip + r":2375") if self.ip else None
+        custom_env = {}
+        if self.docker_host:
+            custom_env['DOCKER_HOST'] = self.docker_host
+        if DOCKER_TLS_VERIFY:
+            custom_env['DOCKER_TLS_VERIFY'] = DOCKER_TLS_VERIFY
+        if DOCKER_CERT_PATH:
+            custom_env['DOCKER_CERT_PATH'] = DOCKER_CERT_PATH
         if self.backend == "docker":
-            self.client = docker.from_env(timeout=120,environment=custom_env)
+            print("=docker-ip="*20)
+            print(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
+            self.logger.info(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
+            self.client = docker.from_env(timeout=120, environment=custom_env or None)
         elif self.backend == "kubernetes":
             # Try in-cluster config first, fallback to kubeconfig
             try:
@@ -294,6 +347,11 @@ class DockerRuntime(ExecutionEnvironment):
             except Exception:
                 config.load_kube_config()
             self.client = client.CoreV1Api()
+        elif self.backend == "local":
+            # No daemon, no client. start_container() will materialise a
+            # per-task sandbox directory on the host.
+            self.client = None
+            self.logger.info("LocalRuntime: docker daemon is bypassed; commands run on host")
 
         # Start the container
         self.container = None
@@ -316,6 +374,8 @@ class DockerRuntime(ExecutionEnvironment):
 
         if self.backend == "kubernetes":
             self.logger.info("Kubernetes environment initialized")
+        elif self.backend == "local":
+            self.logger.info("Local environment initialized at %s", self._local_sandbox)
         else:
             print("Docker environment initialized")
             self.logger.info("Docker environment initialized")
@@ -502,12 +562,37 @@ class DockerRuntime(ExecutionEnvironment):
                 self.logger.error(f"Failed to check pod status after watch error: {status_error}")
                 raise RuntimeError(f"Failed to verify pod status: {status_error}")
 
+    def _start_local_sandbox(self, ctr_name: str):
+        """Materialise the per-task sandbox dir used by the local backend.
+
+        Layout (mirrors the docker container's well-known paths):
+            <root>/<ctr_name>/testbed  -> self.repo_path target
+            <root>/<ctr_name>/root     -> self.alt_path  target
+            <root>/<ctr_name>/tmp      -> scratch
+        """
+        sandbox = Path(LOCAL_SANDBOX_ROOT) / ctr_name
+        (sandbox / "testbed").mkdir(parents=True, exist_ok=True)
+        (sandbox / "root").mkdir(parents=True, exist_ok=True)
+        (sandbox / "tmp").mkdir(parents=True, exist_ok=True)
+        self._local_sandbox = str(sandbox)
+        # Rewire the standard paths to point inside the sandbox so existing
+        # callers (which use absolute paths like /testbed, /root, /run_tests.sh)
+        # get redirected. We keep the same names so other code paths stay valid.
+        self.repo_path = str(sandbox / "testbed")
+        self.alt_path = str(sandbox / "root")
+        self.container = _LocalContainer(container_id=ctr_name, workdir=self._local_sandbox)
+        self.logger.info(f"LocalRuntime sandbox ready at {self._local_sandbox}")
+
     def start_container(
         self, docker_image: str, command: str, ctr_name: str, **docker_kwargs
     ):
         # Start or reuse a container
         try:
             self.logger.info("begin initialing starting container")
+            if self.backend == "local":
+                self._start_local_sandbox(ctr_name)
+                self.logger.info("has finished initialied starting container (local)")
+                return
             if self.backend == "docker":
                 containers = self.client.containers.list(
                     all=True, filters={"name": ctr_name}
@@ -618,6 +703,11 @@ class DockerRuntime(ExecutionEnvironment):
                     self.container.remove()
                 elif self.backend == "kubernetes":
                     self._stop_kubernetes_pod()
+                elif self.backend == "local":
+                    self.container.stop()
+                    self.container.remove()
+                    if getattr(self, "_local_sandbox", None):
+                        shutil.rmtree(self._local_sandbox, ignore_errors=True)
         except Exception as e:
             print("Container stop/delete error:", repr(e))
 
@@ -1097,6 +1187,91 @@ class DockerRuntime(ExecutionEnvironment):
             self.logger.error(f"Unexpected error during Kubernetes exec: {repr(e)}")
             return f"Error: {repr(e)}", "-1"
 
+    def _local_path(self, path: str) -> str:
+        """Translate an absolute docker-container path (e.g. ``/testbed/x`` or
+        ``/run_tests.sh``) to the equivalent path inside the host sandbox."""
+        if not path:
+            return path
+        sb = self._local_sandbox
+        if path == "/" or path.startswith("/"):
+            # Map well-known mount points first, then anything else under /
+            # falls under <sandbox>/root_fs/...
+            if path == self.repo_path or path.startswith(self.repo_path):
+                return path  # already a sandbox path
+            if path == self.alt_path or path.startswith(self.alt_path):
+                return path
+            if path.startswith("/testbed"):
+                return os.path.join(sb, "testbed") + path[len("/testbed"):]
+            if path.startswith("/root"):
+                return os.path.join(sb, "root") + path[len("/root"):]
+            if path.startswith("/tmp"):
+                return os.path.join(sb, "tmp") + path[len("/tmp"):]
+            # generic absolute path -> drop under sandbox/root_fs
+            return os.path.join(sb, "root_fs") + path
+        return path
+
+    def _rewrite_command_paths(self, command: str) -> str:
+        """Rewrite well-known container absolute paths to their sandbox host
+        equivalents so commands like `bash /run_tests.sh`, `cat /testbed/x.py`,
+        or `cp /tmp/foo /root/bar` keep working under the local backend."""
+        sb = self._local_sandbox
+        # Order matters: rewrite longer / more specific prefixes first.
+        replacements = [
+            ("/testbed", os.path.join(sb, "testbed")),
+            ("/r2e_tests", os.path.join(sb, "r2e_tests")),
+            ("/run_tests.sh", os.path.join(sb, "root_fs", "run_tests.sh")),
+            ("/run_tests_regression.sh", os.path.join(sb, "root_fs", "run_tests_regression.sh")),
+            ("/root/", os.path.join(sb, "root") + "/"),
+            ("/tmp/", os.path.join(sb, "tmp") + "/"),
+        ]
+        out = command
+        for src, dst in replacements:
+            out = out.replace(src, dst)
+        return out
+
+    def _run_local(
+        self,
+        code: str,
+        timeout: int = CMD_TIMEOUT,
+        args: str = "",
+        workdir: str = "",
+    ) -> tuple[str, str]:
+        """Execute a shell command on the host inside the local sandbox.
+
+        Mirrors the docker `run` contract: returns (output, error_code_str).
+        We deliberately do NOT prepend `timeout {n}` like the docker path
+        because subprocess.run already enforces the timeout and `timeout(1)`
+        may not be present on every host.
+        """
+        cwd = workdir or self.repo_path
+        # Translate /testbed-style absolute cwd to host sandbox path.
+        cwd = self._local_path(cwd)
+        if not os.path.isdir(cwd):
+            os.makedirs(cwd, exist_ok=True)
+        command = self._rewrite_command_paths(f"{code} {args}".strip())
+        env = os.environ.copy()
+        env["PATH"] = env.get("PATH", "") + ":" + DOCKER_PATH
+        env["R2EGYM_SANDBOX"] = self._local_sandbox
+        try:
+            proc = subprocess.run(
+                ["/bin/bash", "-c", command],
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
+            output = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
+            output = re.sub(r"\x1b\[[0-9;]*m|\r", "", output)
+            if proc.returncode != 0:
+                return output, f"Error: Exit code {proc.returncode}"
+            return output, "0"
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Local exec timeout ({timeout}s) for: {command}")
+            return f"The command took too long to execute (>{timeout}s)", "-1"
+        except Exception as e:
+            return f"Error: {repr(e)} for command: {command}", "-1"
+
     def run(
         self,
         code: str,
@@ -1118,6 +1293,8 @@ class DockerRuntime(ExecutionEnvironment):
 
         if self.backend == "kubernetes":
             return self._run_kubernetes(exec_code, timeout, args, workdir=exec_workdir)
+        if self.backend == "local":
+            return self._run_local(exec_code, timeout, args, workdir=exec_workdir)
 
         command = f"timeout {timeout} {exec_code} {args}"
         self.logger.info(f"started submit command: {command}")
@@ -1290,7 +1467,8 @@ class DockerRuntime(ExecutionEnvironment):
 
     def copy_to_container(self, src_path: str, dest_path: str):
         """
-        Copies a file or directory from the host into the container (Docker or Kubernetes).
+        Copies a file or directory from the host into the container
+        (Docker, Kubernetes, or local sandbox).
         """
         if self.backend == "docker":
             tar_stream = io.BytesIO()
@@ -1298,6 +1476,15 @@ class DockerRuntime(ExecutionEnvironment):
                 tar.add(src_path, arcname=os.path.basename(dest_path))
             tar_stream.seek(0)
             self.container.put_archive(os.path.dirname(dest_path), tar_stream.read())
+        elif self.backend == "local":
+            dest = self._local_path(dest_path)
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            if os.path.isdir(src_path):
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                shutil.copytree(src_path, dest)
+            else:
+                shutil.copy2(src_path, dest)
         else:
             # Kubernetes pod copy
             return self._copy_to_container_kubernetes(src_path, dest_path)

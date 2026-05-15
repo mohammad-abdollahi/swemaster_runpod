@@ -175,16 +175,36 @@ CapEff: 00000000a80425fb        # no CAP_SYS_ADMIN
 ```
 
 The RunPod kernel security profile blocks `unshare()`, so nested
-containerization is impossible. Options on another machine:
+containerization is impossible. Three options:
 
 1. **Docker-capable host** (bare-metal, GCE/EC2 with privileged, a non-RunPod
-   pod). The script in `examples/swe/smoke_test_4b_single_h200.sh` should run
-   end-to-end after the docker daemon is up.
-2. **Kubernetes backend** (`+env.env_args.backend=kubernetes`). Requires a
+   pod). The script in `examples/swe/smoke_test_4b_single_h200.sh` runs
+   end-to-end after the docker daemon is up. Use `RLLM_BACKEND=docker` (the
+   default outside RunPod).
+2. **Kubernetes backend** (`RLLM_BACKEND=kubernetes`). Requires a
    reachable cluster and a kubeconfig.
-3. **Bypass containerization** — not currently supported by `r2egym`; would
-   require adding a "local" backend that runs commands directly on the host
-   (security risk for arbitrary agent code).
+3. **Local (no-docker) backend** — implemented in [R2E-Gym/src/r2egym/agenthub/runtime/docker.py](R2E-Gym/src/r2egym/agenthub/runtime/docker.py).
+   This is the default on RunPod. Each rollout gets a per-task sandbox dir
+   under `${R2EGYM_LOCAL_ROOT:-/tmp/r2egym_local}/<container_name>/` with
+   `testbed/`, `root/` and `tmp/` subdirs that mirror the docker container's
+   well-known paths. Shell commands are executed on the host via
+   `subprocess.run` with absolute paths (`/testbed`, `/run_tests.sh`, etc.)
+   rewritten to point inside the sandbox. The host's existing toolchain is
+   used: there is no conda/testbed env, so test scripts that assume the
+   docker-image-baked Python env will not actually pass — the local backend
+   is for **pipeline plumbing verification**, not real reward signal. To
+   force-enable it regardless of caller config, set
+   `R2EGYM_FORCE_LOCAL_BACKEND=1`.
+
+### Switching backends in the smoke test
+
+```bash
+# RunPod default (no docker daemon needed):
+bash DeepSWE_RL/rllm/examples/swe/smoke_test_4b_single_h200.sh
+
+# On a docker-capable host:
+RLLM_BACKEND=docker bash DeepSWE_RL/rllm/examples/swe/smoke_test_4b_single_h200.sh
+```
 
 ## Dataset
 

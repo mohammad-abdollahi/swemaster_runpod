@@ -35,17 +35,51 @@ export RLLM_USE_PARENT_VENV=1
 # rllm package is not installed; expose it via PYTHONPATH
 export PYTHONPATH=./DeepSWE_RL/rllm:./R2E-Gym/src:${PYTHONPATH:-}
 
+# Choose how the per-task sandbox is realised. Default to "local" (subprocess
+# on the host) because RunPod blocks unshare() so docker run cannot start a
+# container. Override with RLLM_BACKEND=docker on a docker-capable host.
+RLLM_BACKEND=${RLLM_BACKEND:-local}
+if [ "${RLLM_BACKEND}" = "local" ]; then
+    # Belt-and-suspenders: if anything inside r2egym tries to fall back to
+    # docker, this env var forces the LocalRuntime path in docker.py.
+    export R2EGYM_FORCE_LOCAL_BACKEND=1
+fi
+echo "Sandbox backend: ${RLLM_BACKEND}"
+
 # ----------------------- paths ------------------------------------------
-MODEL_PATH=${MODEL_PATH:-/workspace/models/SWE-Master-4B-SFT}
-TRAIN_PARQUET=${TRAIN_PARQUET:-/workspace/swemaster_runpod/data_examples/rl_data/ood_data/equal_0.3999999_0.9999999_swe-gym_and_rebench_demo_for_RL/train_00000_verl.parquet}
+# Repo root defaults to /workspace/swemaster_runpod but auto-falls back to the
+# script's containing repo so this works from /root/swemaster_runpod too.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT_DEFAULT=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
+REPO_ROOT=${REPO_ROOT:-${REPO_ROOT_DEFAULT}}
+if [ -d /workspace/swemaster_runpod ]; then
+    REPO_ROOT=/workspace/swemaster_runpod
+fi
+
+# Venv: use /workspace/venv if present, otherwise the user's currently-active
+# python interpreter.
+if [ -x /workspace/venv/bin/python3 ]; then
+    PY=/workspace/venv/bin/python3
+else
+    PY=${PY:-$(command -v python3)}
+fi
+
+# Output directory: /workspace when available, otherwise under the repo.
+OUT_ROOT=${OUT_ROOT:-/workspace}
+if [ ! -d "${OUT_ROOT}" ]; then
+    OUT_ROOT="${REPO_ROOT}/training_outputs"
+fi
+
+MODEL_PATH=${MODEL_PATH:-${OUT_ROOT}/models/SWE-Master-4B-SFT}
+TRAIN_PARQUET=${TRAIN_PARQUET:-${REPO_ROOT}/data_examples/rl_data/ood_data/equal_0.3999999_0.9999999_swe-gym_and_rebench_demo_for_RL/train_00000_verl.parquet}
 VAL_PARQUET=${VAL_PARQUET:-${TRAIN_PARQUET}}
 
 PROJECT_NAME="swe_master_smoke_test"
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
 EXPERIMENT_NAME="smoke_${TS}"
 
-DEFAULT_LOCAL_DIR="/workspace/training_outputs/${PROJECT_NAME}/${EXPERIMENT_NAME}"
-ROLLOUT_DATA_DIR="/workspace/training_outputs_rollout/${PROJECT_NAME}/${EXPERIMENT_NAME}"
+DEFAULT_LOCAL_DIR="${OUT_ROOT}/training_outputs/${PROJECT_NAME}/${EXPERIMENT_NAME}"
+ROLLOUT_DATA_DIR="${OUT_ROOT}/training_outputs_rollout/${PROJECT_NAME}/${EXPERIMENT_NAME}"
 mkdir -p "${DEFAULT_LOCAL_DIR}" "${ROLLOUT_DATA_DIR}"
 
 echo "Project: ${PROJECT_NAME}"
@@ -55,8 +89,10 @@ echo "Train data: ${TRAIN_PARQUET}"
 echo "Val data: ${VAL_PARQUET}"
 
 # ----------------------- launch -----------------------------------------
-cd /workspace/swemaster_runpod
-exec /workspace/venv/bin/python3 -m rllm.trainer.verl.train_agent_ppo \
+cd "${REPO_ROOT}"
+echo "Repo root: ${REPO_ROOT}"
+echo "Python:    ${PY}"
+exec "${PY}" -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
     data.train_files="${TRAIN_PARQUET}" \
     data.val_files="${VAL_PARQUET}" \
@@ -115,7 +151,7 @@ exec /workspace/venv/bin/python3 -m rllm.trainer.verl.train_agent_ppo \
     env.name=swe_arsenal \
     +env.env_args.delete_image=False \
     +env.env_args.scaffold="openhands" \
-    +env.env_args.backend="docker" \
+    +env.env_args.backend="${RLLM_BACKEND}" \
     agent.name=sweagent \
     agent.max_steps=4 \
     agent.overlong_filter=True \
