@@ -1,0 +1,43 @@
+# ---- Python caches ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- Secrets / credentials (NEVER commit) ----
+.claude/.credentials.json
+**/.credentials.json
+*.pem
+*.key
+.env
+.netrc
+
+# ---- Heavy artifacts that live on /scratch, not in the repo ----
+# (kept here as a guard in case someone symlinks them in)
+*.sif
+*.whl.tmp
+swemaster/venv/
+swemaster/sif/
+swemaster/cache/
+swemaster/runs/
+swemaster/test_envs/
+swemaster/repos/
+swemaster/models/
+
+# ---- Large model / data blobs ----
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# ---- Logs ----
+*.log
+slurm-*.out
+
+# ---- OS noise ----
+.DS_Store
+
+# ---- Force-include the chat archive (overrides *.log etc. above) ----
+!.claude-archive/
+!.claude-archive/**

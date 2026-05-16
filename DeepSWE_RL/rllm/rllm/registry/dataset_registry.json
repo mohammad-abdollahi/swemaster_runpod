@@ -1,0 +1,6 @@
+{
+  "frozenlake": {
+    "train": "/project/def-hemmati-ac/moham98/SWE-Master/DeepSWE_RL/rllm/rllm/data/datasets/frozenlake/train.parquet",
+    "test": "/project/def-hemmati-ac/moham98/SWE-Master/DeepSWE_RL/rllm/rllm/data/datasets/frozenlake/test.parquet"
+  }
+}
