@@ -65,6 +65,9 @@ log "9. vllm 0.10.2 (bumps torch -> 2.8 cu128)"
 uv pip install vllm==0.10.2
 
 log "10. flash-attn 2.8.3 (no build isolation)"
+# --no-build-isolation means flash-attn builds against THIS venv, so its
+# build deps (wheel, packaging, setuptools, torch) must already be present.
+uv pip install wheel packaging
 uv pip install --no-build-isolation flash-attn==2.8.3
 
 log "11. import-side pins established on H200"

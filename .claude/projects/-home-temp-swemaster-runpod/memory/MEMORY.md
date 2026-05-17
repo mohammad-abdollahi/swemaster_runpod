@@ -1,2 +1,4 @@
-- [VM resources](vm-resources.md) — single L40S 46GB, must downscale all configs
+- [VM resources — H100 (CURRENT)](vm-resources-h100.md) — now 1xH100 80GB + 196GB RAM; RAM constraint gone, can scale up
+- [VM resources — L40S (superseded)](vm-resources.md) — prior 1xL40S 46GB/31GB; kept for history
 - [Training pipeline plan](training-plan.md) — what we're actually running and why
+- [build_env / rllm deps gotchas](build-env-deps.md) — flash-attn needs wheel; rllm --no-deps misses sentence_transformers etc.

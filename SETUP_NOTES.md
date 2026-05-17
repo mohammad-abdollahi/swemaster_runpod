@@ -282,3 +282,102 @@ n=4 GRPO, ~40 PPO steps, LoRA, periodic val + ckpts. A single GRPO `step:1`
 was already verified end-to-end (real container rollout → test reward → LoRA
 update → full metrics). Live log `/home/temp/train_comprehensive.log`; last
 good single-step log `/home/temp/train_public_step1_SUCCESS.log`.
+
+---
+
+# H100 continuation (2026-05-17) — full-param feasibility + multi-GPU handoff
+
+Machine moved again to a **single NVIDIA H100 80 GB, 196 GB RAM, 16 vCPU,
+1.2 TB disk, Docker-capable, passwordless sudo** (`unshare` works, full caps —
+the original H200 container blocker does not apply). The H200/L40S
+venv/model/`/workspace` do **not** exist here; everything was rebuilt at
+`/home/temp`. See memory: `vm-resources-h100.md`, `build-env-deps.md`,
+`training-plan.md` (auto-reloaded by Claude on restore).
+
+## What was done on the H100 (all reproducible)
+
+1. Docker: `sudo usermod -aG docker temp` + `chmod 666 /var/run/docker.sock`;
+   nested containers verified.
+2. `bash build_env.sh` — **two reproducibility fixes committed**:
+   - flash-attn `--no-build-isolation` needs build deps present first →
+     `uv pip install wheel packaging` added before flash-attn (step 10).
+   - rllm is `-e --no-deps`; its runtime graph needs (not auto-installed):
+     `polars dm-tree datasets accelerate peft pylatexenc tensordict torchdata
+     pyarrow sentence_transformers`. Install these after build_env, before
+     launching (sweep `rllm.trainer.verl.train_agent_ppo`,
+     `rllm.rewards.math_reward`, `rllm.utils`, `rllm.agents.sweagent`,
+     `rllm.engine.agent_execution_engine`, `r2egym.agenthub.runtime.docker`
+     in a pip-on-missing loop). Verified env: torch 2.8.0+cu128, vllm 0.10.2,
+     flash-attn 2.8.3, transformers 4.57.6 on H100.
+3. Model re-downloaded → `/home/temp/models/SWE-Master-4B-SFT`.
+4. SWE-rebench parquet (committed) verified; `swerebench/...` images pull
+   from public Docker Hub.
+
+## Results on the single H100
+
+- **LoRA** (`train_comprehensive_swerebench_l40s.sh`): GRPO/LOOP `step:1`
+  completed end-to-end again (GPU 72.7/80, traj/steps 6.75, response 8192
+  fully clipped, solve_none → zero reward → zero grad = the documented
+  reward-sparsity property, not a bug). `step:2` dies on the LoRA↔vLLM
+  `wake_up` `KeyError: 'layers.0.self_attn.qkv_proj.base_layer.weight'`
+  (LoRA-param collection in the sharding manager) — the open multi-step
+  LoRA blocker.
+- **Full-param** (`train_comprehensive_swerebench_h100.sh`, paper recipe):
+  3 attempts, all fail on ONE GPU (log `/home/temp/train_h100_fullft.log`):
+  (1) 32K resp / vLLM 0.45 → OOM in `loss.backward()`;
+  (2) 8K resp / vLLM 0.30 → OOM in `optimizer.step()` (`_foreach_sqrt` over
+      fp32 Adam state);
+  (3) 8K / vLLM 0.20 / `expandable_segments:True` → vLLM `init_engine`
+      FAILS (16 GB < 4B vLLM floor).
+  **Definitive, code-confirmed:** verl builds plain on-GPU `optim.AdamW`
+  (`verl/workers/fsdp_workers.py:369`) and `load_fsdp_optimizer(device_id=
+  cuda)` (:663) before every update → the ~48 GB fp32 Adam+master state is
+  GPU-resident *during* `optimizer.step()` regardless of seq length;
+  `optimizer_offload` only frees it *between* steps. No CPU/8-bit-Adam path.
+  vLLM init floor (~24 GB) + ~48 GB optimizer + params/grads (~16 GB) > 80 GB
+  from both sides. **Full-param 4B PPO is impossible on 1×80 GB with this
+  pipeline.** Not a tuning issue — the paper sharded it across 16 GPUs.
+
+## GPU-count requirement for full-param 4B PPO
+
+Static cost params+grads+AdamW(fp32) ≈ **64 GB**, FSDP-shardable. Activations
+(~10–18 GB @ 8–16K resp, grad-ckpt) shard only with ulysses. vLLM ~24 GB
+(1 GPU) / ~12 GB/GPU (TP).
+
+| GPUs ×80 GB | per-GPU @ 8K resp | verdict |
+|---|---|---|
+| 1 | ~103 GB | ❌ impossible (nothing to shard) |
+| **2** | ~59 GB | ✅ **sufficient (recommended min)** |
+| 4 | ~34 GB | ✅ comfortable + longer seq |
+| 8–16 | — | only for exact paper (122K resp + batch 32) |
+
+GPUs must be 80 GB (2×48 GB won't fit ~59 GB/GPU; need 4×). NVLink preferred
+for FSDP all-gather.
+
+## Restore on a ≥2×80 GB machine
+
+1. `git clone` (branch `setup/runpod-h200`), `cd`, start Claude Code
+   (memory + transcripts reload context).
+2. `bash build_env.sh`; then install the rllm runtime deps listed above.
+3. `uvx --from huggingface_hub hf download RUC-AIBOX/SWE-Master-4B-SFT
+   --local-dir /home/temp/models/SWE-Master-4B-SFT`.
+4. Docker group/socket as above; verify a `swerebench/...` pull.
+5. Run **`DeepSWE_RL/rllm/examples/swe/train_comprehensive_swerebench_multigpu.sh`**
+   (added this session) — `NUM_GPUS=<n>` env; FSDP FULL_SHARD across GPUs +
+   vLLM tensor-parallel; full-param, no LoRA; paper step counts
+   (max_steps 150, timeout 3600, epochs 5, n=4). Header documents how to
+   scale max_response / ulysses toward the exact paper on 4/8/16 GPUs.
+
+## GRPO vs the code's `loop` estimator (clarification)
+
+PPO is the trainer family; GRPO = PPO with **no critic** + a **group
+baseline** (that's why `rollout.n=4`, `critic_warmup=0`, no critic model).
+verl reuses the PPO scaffold and `critic/*` metric names for all estimators,
+so logs say "PPO step" / `critic/rewards` even with no critic network. The
+paper says **GRPO** but every SWE-Master script (incl. the authors' own
+`swe_rl_debug_..._4b.sh`) sets **`algorithm.adv_estimator=loop`** = LOOP/RLOO
+(leave-one-out baseline: `r − mean(other n−1)`), a critic-free group-baseline
+sibling of GRPO (GRPO = `(r − group_mean)/group_std`). For paper-literal GRPO,
+one-line change: `algorithm.adv_estimator=grpo`. Either way, all-equal rewards
+in a group → zero advantage → zero gradient (intrinsic; needs reward
+variance).
