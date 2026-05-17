@@ -1,0 +1,2 @@
+- [VM resources](vm-resources.md) — single L40S 46GB, must downscale all configs
+- [Training pipeline plan](training-plan.md) — what we're actually running and why

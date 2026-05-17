@@ -100,8 +100,13 @@ DEFAULT_NAMESPACE = "default"
 DOCKER_PATH = "/root/.venv/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 LSP_DOCKER_PATH = "/opt/miniconda3/envs/testbed/bin:/opt/miniconda3/condabin:/opt/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-DOCKER_TLS_VERIFY = "1"
-DOCKER_CERT_PATH = "pem_saved_path_including_ca.pem_cert.pem_key.pem" # Path for PEM storage; optional and can be removed if not needed.
+# Env-driven and unset by default. The original SWE-Master infra used a
+# remote TLS docker host; on a local docker daemon these must stay empty,
+# otherwise docker.from_env() asks for a (nonexistent) cert and raises
+# TLSParameterError. Set R2E_DOCKER_TLS_VERIFY / R2E_DOCKER_CERT_PATH to
+# restore the remote-TLS behaviour.
+DOCKER_TLS_VERIFY = os.environ.get("R2E_DOCKER_TLS_VERIFY", "")
+DOCKER_CERT_PATH = os.environ.get("R2E_DOCKER_CERT_PATH", "")
 
 
 base_dir = Path("./R2E-Gym/test_spec_cache")
@@ -195,8 +200,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swegym.harness.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                embedded_test_spec = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**embedded_test_spec)
                 self.logger.info("has successfully read test_spec")
             
             else:
@@ -219,8 +224,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                embedded_test_spec = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**embedded_test_spec)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -241,8 +246,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swerebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                embedded_test_spec = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**embedded_test_spec)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -275,18 +280,28 @@ class DockerRuntime(ExecutionEnvironment):
 
 
         self.ip = ip
-        self.docker_host = r"tcp://" + self.ip + r":2375"
-        custom_env = {
-            'DOCKER_HOST': self.docker_host, 
-            'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY, 
-            'DOCKER_CERT_PATH': DOCKER_CERT_PATH, 
-            # 'DOCKER_API_VERSION': '1.40' 
-        }
+        # If a remote docker IP was supplied (original SWE-Master internal
+        # infra), use the tcp host + optional TLS. Otherwise fall back to the
+        # local docker daemon (unix socket or ambient DOCKER_HOST env), which
+        # is the case on this single-GPU VM.
+        if self.ip:
+            self.docker_host = r"tcp://" + self.ip + r":2375"
+            custom_env = {'DOCKER_HOST': self.docker_host}
+            if DOCKER_TLS_VERIFY:
+                custom_env['DOCKER_TLS_VERIFY'] = DOCKER_TLS_VERIFY
+            if DOCKER_CERT_PATH:
+                custom_env['DOCKER_CERT_PATH'] = DOCKER_CERT_PATH
+        else:
+            self.docker_host = os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")
+            custom_env = None
         print("=docker-ip="*20)
         print(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         self.logger.info(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         if self.backend == "docker":
-            self.client = docker.from_env(timeout=120,environment=custom_env)
+            if custom_env is not None:
+                self.client = docker.from_env(timeout=120, environment=custom_env)
+            else:
+                self.client = docker.from_env(timeout=120)
         elif self.backend == "kubernetes":
             # Try in-cluster config first, fallback to kubeconfig
             try:

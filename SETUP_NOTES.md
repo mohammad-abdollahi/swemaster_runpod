@@ -222,3 +222,63 @@ The `.claude/` directory is *partly* tracked:
 
 To continue this conversation on a new machine: clone the repo, then start
 Claude Code in the repo root. The transcript will be re-loaded into context.
+
+---
+
+# L40S continuation (2026-05-17) — RL pipeline driven to real training
+
+Continued on a single **L40S 46 GB / 31 GB RAM / Docker-capable** VM (the
+H200 pod could not run containers; this one can — the whole point of the
+move). The pipeline now runs end-to-end and does real GRPO PPO updates on the
+genuine SWE-Master training distribution.
+
+## Redeploy on a better-GPU server
+
+1. `git clone` this repo (branch `setup/runpod-h200`), `cd` in, start Claude
+   Code — `.claude/projects/-home-temp-swemaster-runpod/*.jsonl` + `memory/*.md`
+   reload the full context.
+2. `bash build_env.sh` (uv venv + torch cu128 + agentica verl fork +
+   rllm/r2egym + vllm 0.10.2 + flash-attn + pinned deps). Adjust paths at top
+   if not `/home/temp`.
+3. `uvx --from huggingface_hub hf download RUC-AIBOX/SWE-Master-4B-SFT
+   --local-dir <models>/SWE-Master-4B-SFT`.
+4. Datasets are committed under `data_examples/rl_data/`; expand with
+   `build_comprehensive_swerebench.py` (nebius/SWE-rebench; its `docker_image`
+   IS the public `swerebench/...` Docker Hub mirror).
+5. Run `DeepSWE_RL/rllm/examples/swe/train_comprehensive_swerebench_l40s.sh`
+   (edit paths/`PYTHON_BIN` if not `/home/temp`).
+
+## Patches on this branch (all committed)
+
+- `R2E-Gym/.../runtime/docker.py`: TLS hardcode → env-driven + local-socket
+  fallback; `make_test_spec` scoping bug fixed (local renamed
+  `embedded_test_spec`).
+- `DeepSWE_RL/rllm/.../engine/agent_execution_engine.py`:
+  `RLLM_MAX_ROLLOUT_CONCURRENCY` env cap (rollout containers one at a time).
+- `DeepSWE_RL/rllm/verl/.../sharding_manager/fsdp_vllm.py`:
+  `'cpu' in torch.device` → `.device.type == 'cpu'` (lines 141 & 155). Real
+  verl bug that crashed **every** multi-step LoRA run at step 2 (vLLM resync).
+
+## Hardware-fit decisions (revisit on a bigger GPU)
+
+- **LoRA r32, FSDP offload OFF.** Full-param PPO of 4B needs ~40 GB host RAM
+  (offloaded params + fp32 Adam); 31 GB can't (pinned mem, swap won't help).
+  On a big-VRAM+big-RAM server, drop LoRA / re-enable offload for full-FT (the
+  original recipe). Knobs in `train_comprehensive_swerebench_l40s.sh`.
+- Sequential rollouts, short `max_response_length`,
+  `gpu_memory_utilization=0.38`, `n=4` GRPO — raise on a bigger box.
+- 96 GB `/swapfile` was a stopgap; LoRA removed the need.
+
+## Dataset note (methodological)
+
+SWE-Master trains on **SWE-rebench + SWE-Gym OOD**; SWE-bench Verified is the
+held-out eval (`val_files`). Train only on the SWE-rebench/Gym parquets under
+`data_examples/rl_data/`; do NOT train on SWE-bench (eval contamination).
+
+## Status at hand-off
+
+`train_comprehensive_swerebench_l40s.sh`: 20 train + 4 val SWE-rebench tasks,
+n=4 GRPO, ~40 PPO steps, LoRA, periodic val + ckpts. A single GRPO `step:1`
+was already verified end-to-end (real container rollout → test reward → LoRA
+update → full metrics). Live log `/home/temp/train_comprehensive.log`; last
+good single-step log `/home/temp/train_public_step1_SUCCESS.log`.

@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import logging
+import os
 import time
 import traceback
 import uuid
@@ -612,6 +613,9 @@ class AgentExecutionEngine:
         assert all(env is not None and isinstance(env, BaseEnv) for env in self.envs), "All environments must be inheriting from BaseEnv"
         assert all(env.is_multithread_safe() for env in self.envs), "All environments must be multithread safe for async engine"  # type: ignore
         max_concurrency = self.n_parallel_agents
+        _cap = os.environ.get("RLLM_MAX_ROLLOUT_CONCURRENCY")
+        if _cap:
+            max_concurrency = min(max_concurrency, int(_cap))
         logger.info(f"in trajectory_generator max_concurrency:{max_concurrency}")
 
         self.executor = ThreadPoolExecutor(max_workers=max_concurrency)
@@ -669,6 +673,9 @@ class AgentExecutionEngine:
         """
 
         max_concurrent = self.n_parallel_agents
+        _cap = os.environ.get("RLLM_MAX_ROLLOUT_CONCURRENCY")
+        if _cap:
+            max_concurrent = min(max_concurrent, int(_cap))
 
         # Initialize results list to store trajectories for all tasks
         all_trajectories = {}
