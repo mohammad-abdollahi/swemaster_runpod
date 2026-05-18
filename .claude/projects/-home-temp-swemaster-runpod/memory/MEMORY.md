@@ -1,4 +1,5 @@
-- [VM resources — H100 (CURRENT)](vm-resources-h100.md) — now 1xH100 80GB + 196GB RAM; RAM constraint gone, can scale up
+- [H200 full-param SUCCESS (CURRENT)](h200-fullparam-success.md) — single 143GB H200: full-param 4B PPO runs end-to-end + multi-step; overturns the "needs >=2x80GB" conclusion
+- [VM resources — H100 (superseded)](vm-resources-h100.md) — prior 1xH100 80GB; full-param impossible there
 - [VM resources — L40S (superseded)](vm-resources.md) — prior 1xL40S 46GB/31GB; kept for history
 - [Training pipeline plan](training-plan.md) — what we're actually running and why
-- [build_env / rllm deps gotchas](build-env-deps.md) — flash-attn needs wheel; rllm --no-deps misses sentence_transformers etc.
+- [build_env / rllm deps gotchas](build-env-deps.md) — flash-attn needs wheel; rllm --no-deps misses sentence_transformers etc.; swe_agent module is rllm.agents.swe_agent

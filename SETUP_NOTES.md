@@ -381,3 +381,110 @@ sibling of GRPO (GRPO = `(r − group_mean)/group_std`). For paper-literal GRPO,
 one-line change: `algorithm.adv_estimator=grpo`. Either way, all-equal rewards
 in a group → zero advantage → zero gradient (intrinsic; needs reward
 variance).
+
+---
+
+# H200 continuation (2026-05-18) — full-param 4B PPO WORKS on a single GPU
+
+Machine moved AGAIN to a **single NVIDIA H200 143 GB VRAM, 196 GB RAM, 16
+vCPU, 1.2 TB disk, Docker-capable, passwordless sudo, `unshare` works (full
+caps `000001ffffffffff`)**. This is NOT the original blocked RunPod H200 pod —
+nested containers run fine here. Full memory/findings auto-reload via
+`memory/h200-fullparam-success.md` (+ MEMORY.md index).
+
+## The breakthrough
+
+Every prior machine concluded full-param 4B PPO is impossible on one GPU
+(L40S 31 GB RAM forced LoRA; H100 80 GB VRAM: optimizer+vLLM+activations
+> 80 GB, 3 OOMs) and LoRA — the only single-GPU fallback — dies at step 2
+on the vLLM `wake_up` resync KeyError. **The H200's 143 GB lifts the
+ceiling.** New script `DeepSWE_RL/rllm/examples/swe/train_comprehensive_swerebench_h200.sh`
+(full-param, no LoRA, paper recipe) ran **end-to-end and multi-step** —
+the first single-GPU run ever past step 1. Full-param also has no LoRA↔vLLM
+resync bug.
+
+## Setup on this box (reproducible)
+
+1. `sudo systemctl start docker` (DEFAULT daemon.json — no iptables/bridge
+   hacks; those were ONLY the original RunPod pod). `sudo usermod -aG docker
+   temp`. **Launch training via `sg docker -c "..."`** — socket is
+   `srw-rw---- root docker`; do NOT `chmod 666` (auto-classifier blocks it and
+   it's unnecessary).
+2. `bash build_env.sh` (clean, all imports OK: torch 2.8.0+cu128, vllm
+   0.10.2, flash-attn 2.8.3, transformers 4.57.6).
+3. Re-seed rllm `-e --no-deps` runtime deps (build-env-deps memory):
+   `polars dm-tree datasets accelerate peft pylatexenc tensordict torchdata
+   pyarrow sentence_transformers`. NB the swe agent module is
+   `rllm.agents.swe_agent` (underscore), not `sweagent`.
+4. `uvx --from huggingface_hub hf download RUC-AIBOX/SWE-Master-4B-SFT
+   --local-dir /home/temp/models/SWE-Master-4B-SFT`.
+5. swerebench images pull from public Docker Hub and containers RUN here
+   (verified end-to-end).
+
+## Key fix vs the h100 script
+
+**Drop `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** — vLLM 0.10.2's
+`device_allocator/cumem.py` asserts it is ABSENT (incompatible with its memory
+pool, pytorch#147851). It was only an 80 GB anti-fragmentation lever; on
+143 GB it's unneeded and FATAL to vLLM init.
+
+## max_response_length ceiling (full-param, gpu_mem_util 0.30)
+
+| max_response | peak VRAM | result |
+|---|---|---|
+| 16384 | 120.5 GB | OK |
+| 24576 | 122.8 GB | OK |
+| 32768 | **128.6 GB** | OK (chosen, 14 GB headroom) |
+
+Marginal ≈ +2.3 GB / +8192 tokens. The peak is DETERMINISTIC (bounded by
+`ppo_max_token_len_per_gpu = 8192 + max_response`, the per-microbatch
+logits/activation cap — it does NOT creep over a long run). Extrapolation:
+the paper's 122880 ≈ 150 GB > 143 → still needs multi-GPU ulysses (consistent
+with all prior findings). The h200 script is env-parameterized: `MAX_RESPONSE`,
+`PPO_MAX_TOKEN_LEN`, `GPU_MEM_UTIL`, `TOTAL_EPOCHS`. Search harness:
+`search_max_response.sh`.
+
+## Production run: 5-epoch full-param @ max_response 32768
+
+`MAX_RESPONSE=32768 TOTAL_EPOCHS=5` (paper-exact epochs), 20 SWE-rebench
+train tasks / 4 val, batch 1, n=4 LOOP. Log `/home/temp/train_h200_5epoch.log`.
+Reached **epoch 5, step 81/100, 0 errors** before being stopped (clean
+baseline; user pivoting to a batched run). Peak held at the predicted
+128.6 GB. ckpt+val every 10 steps work (those steps ~25 min vs ~6 min normal).
+
+### Learning result (analyze_learning.py — task-keyed, shuffle-corrected)
+
+verl's train dataloader defaults to `data.shuffle: True` (NOT overridden), so
+step order changes every epoch — position-based first-N/last-N reward is
+task-mix NOISE. `analyze_learning.py` recovers step→task (pairs each
+`...epoch E, step N` marker with the next `Docker image: swerebench/...`
+line) and reports per-task reward by epoch. Through epoch 0→3 (20 tasks each
+revisited 4×): **improved 7, regressed 5, flat 8, mean delta +0.044**;
+55/81 steps non-zero grad; grad_norm mean 0.131 stable; entropy 0.14–0.27
+(not collapsed). Clearest gain `asottile_setup` 0.25→0.75→0.62→0.88.
+Verdict: **real but modest positive signal**, concentrated where within-group
+reward variance exists (the GRPO/LOOP mechanism working as designed); not a
+big capability jump — expected at this smoke scale (20 tasks, n=4, batch=1 →
+1 noisy sample/task/epoch). Snapshot saved `/home/temp/final_learning_report.txt`.
+
+## Batching analysis (next step — feasible & beneficial here)
+
+`train_batch_size` 1→N does NOT raise the GPU peak: with
+`ppo_micro_batch_size_per_gpu=1` + `use_dynamic_bsz=False` the actor still
+does ONE sequence per backward; bigger batch only adds gradient-accumulation
+micro-steps before the optimizer step. Peak stays the deterministic
+~128.6 GB. It also adds NO total compute: rollout work/epoch = num_tasks×n
+either way; batching just groups trajectories into fewer, richer updates →
+kills the ~40% all-equal-zero-gradient steps (variance across many tasks),
+paper-like stable gradients, and FEWER slow ckpt/val cycles → faster
+wall-clock. Paper's 32/16 doesn't fit 20 tasks; use e.g.
+`train_batch_size=20 ppo_mini_batch_size=5` (whole set/update) or `10/5`.
+(User stopped here to ask questions before launching the batched run.)
+
+## Artifacts added this session
+
+- `DeepSWE_RL/rllm/examples/swe/train_comprehensive_swerebench_h200.sh`
+  (env-parameterized full-param H200 recipe)
+- `search_max_response.sh` (max_response ceiling search harness)
+- `analyze_learning.py` (task-keyed, shuffle-corrected learning analysis)
+- `memory/h200-fullparam-success.md` (full findings, auto-reloaded)
