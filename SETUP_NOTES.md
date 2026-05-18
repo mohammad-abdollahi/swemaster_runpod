@@ -488,3 +488,65 @@ wall-clock. Paper's 32/16 doesn't fit 20 tasks; use e.g.
 - `search_max_response.sh` (max_response ceiling search harness)
 - `analyze_learning.py` (task-keyed, shuffle-corrected learning analysis)
 - `memory/h200-fullparam-success.md` (full findings, auto-reloaded)
+
+---
+
+# Paper hyperparameters: what is reproducible on 1×H200 (4B) — 2026-05-18
+
+Authors' two RL recipes (verbatim, in `DeepSWE_RL/rllm/examples/swe/`):
+`swe_rl_debug_hls_try_arsenal_long_step_and_timeout3600_4b.sh` (4B) and
+`swe_rl_debug_hls_try_arsenal_long_step_and_long_time.sh` (32B).
+
+| Hyperparam | 4B RL | 32B RL | Ours 1×H200 |
+|---|---|---|---|
+| Base model | Qwen3-4B | Qwen2.5-Coder-32B | 4B |
+| GPUs | 2×8 = 16 | 8×8 = 64 | 1 |
+| train_batch_size | **32** | **32** | 1 → can be 32 |
+| ppo_mini_batch_size | **16** | 8 | 1 → can be 16 |
+| ppo_micro_batch_size_per_gpu | 1 | 1 | 1 |
+| rollout.n | 4 | 4 | 4 ✅ |
+| max_prompt_length | 8192 | 8192 | 8192 ✅ |
+| max_response_length | 122880 | 102400 | **32768 (cap)** |
+| tensor_model_parallel_size | 2 | 4 | 1 |
+| ulysses_sequence_parallel_size | 8 | 8 | 1 |
+| total_epochs | 5 | 5 | 5 ✅ |
+| max_steps / trajectory_timeout | 150 / 3600 | 150 / 5400 | 150 / 3600 ✅ |
+
+NOTE on the 4B-vs-32B confusion: `train_batch_size=32` is IDENTICAL for both
+models — it is the 4B value, not 32B-specific. The genuinely model-specific
+differences are ppo_mini_batch (16 vs 8), max_response (122880 vs 102400),
+tensor_model_parallel (2 vs 4), trajectory_timeout (3600 vs 5400) and GPU
+count. For our 4B work the 4B column is the reference.
+
+## What is reproducible on the single 143 GB H200 (4B)
+
+GROUP A — already matched exactly (the METHOD): full-param (no LoRA),
+param+optimizer offload, max_prompt=8192, rollout.n=4, max_steps=150,
+trajectory_timeout=3600, total_epochs=5. Algorithm identical.
+
+GROUP B — paper-exact and reproducible here, NOT memory-bound:
+**train_batch_size=32, ppo_mini_batch_size=16.** With
+ppo_micro_batch_size_per_gpu=1 + use_dynamic_bsz=False the actor backprops
+ONE sequence at a time and only accumulates more micro-steps → VRAM peak
+stays the deterministic ~128.6 GB regardless of batch. No extra total compute
+(rollout work/epoch = num_tasks×n either way) — just slower per step, fewer
+slower ckpt/val cycles. ONLY prerequisite: a ≥32-task train parquet (current
+comprehensive parquet = 20 tasks). Expand via `build_comprehensive_swerebench.py`
+(pulls nebius/SWE-rebench; raise the filter cap; its `docker_image` is the
+public `swerebench/...` mirror).
+
+GROUP C — IMPOSSIBLE on 1 GPU (irreducibly multi-GPU sequence sharding):
+- **max_response_length=122880 — EXPLICITLY EXCLUDED. We do NOT want this.**
+  The paper reaches 122K only via ulysses_sequence_parallel_size=8 (each
+  long trajectory sharded across 8 GPUs). On 1 GPU the full-param backward
+  of 122K tokens needs ~150 GB > 143 GB. **Hard cap stays max_response=32768**
+  (peak ~128.6 GB, deterministic). Do not attempt 122880 single-GPU.
+- tensor_model_parallel_size=2 / ulysses_sequence_parallel_size=8 require
+  ≥2 / ≥8 GPUs by definition → forced to 1 here (this is what caps
+  max_response).
+
+DECISION: the runnable paper-faithful 4B config on this box is the GROUP A
+method + GROUP B batch (train_batch_size=32, ppo_mini_batch_size=16) +
+**max_response_length=32768 (NOT 122880)** + a ≥32-task SWE-rebench parquet.
+The 32B recipe is fully out of scope (64 GPUs; 32B won't fit single-GPU
+full-param PPO under any config).

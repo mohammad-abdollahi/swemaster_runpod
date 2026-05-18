@@ -104,6 +104,19 @@ per-task / grad_norm / solve-rate; auto-excludes incomplete trailing epoch).
 `/home/temp/final_learning_report.txt`. Epoch reward (e0–e3):
 0.350→0.388→0.381→0.394 (gentle up, +0.044/task).
 
+PAPER-HYPERPARAM REPRODUCIBILITY (documented in SETUP_NOTES "Paper
+hyperparameters" table, 2026-05-18): authors' 4B recipe =
+`swe_rl_debug_hls_try_arsenal_long_step_and_timeout3600_4b.sh`, 32B =
+`...long_time.sh`. KEY: `train_batch_size=32` is IDENTICAL for 4B and 32B
+(NOT 32B-specific — common confusion). On 1×H200 we CAN reproduce the exact
+4B `train_batch_size=32, ppo_mini_batch_size=16` (memory-free: micro_batch=1
+→ peak stays ~128.6 GB) given a ≥32-task parquet (current=20; expand via
+`build_comprehensive_swerebench.py`). The ONLY irreducibly multi-GPU 4B knob
+is `max_response_length=122880` (needs ulysses_sp=8). **USER DECISION: do NOT
+attempt 122880 — hard cap max_response=32768.** 32B recipe fully out of scope
+(64 GPUs). Runnable paper-faithful 4B = method + batch 32/16 + resp 32768 +
+≥32-task data.
+
 METHOD NOTE (important for analysis): verl's train dataloader defaults to
 `data.shuffle: True` (ppo_trainer.yaml:15) and the h200 script does NOT
 override it → **step order differs every epoch**; position-based
