@@ -503,6 +503,29 @@ for v1 — it kicks in only at v2 — but it is the mechanism that makes the
 prompt-injection token-bounded for large-`|F|` tasks (without it,
 exposing 20+ test bodies eats the context budget).
 
+## 9. Conclusion
+
+We presented Active-Test-Selection (ATS) rewards for SWE-agent RL: a
+curriculum-aware reward that exposes a bounded subset of `FAIL_TO_PASS`
+tests to the policy, replaces the binary terminal reward with continuous
+partial credit (plus an explicit token penalty), and manages the visible
+test set with a four-state bandit-style scheduler.
+
+Beyond improving credit assignment, the proposal has one perhaps
+under-appreciated property: continuous rewards bypass the
+`(rewards == 0).all()` group-variance filtering that is baked into
+verl/rllm's PPO trainer for GRPO/LOOP. Empirically, this turned an
+all-failed 16-rollout PPO step from a no-gradient regime (binary
+baseline) into a 0.001-grad-norm step that, after one PPO update,
+delivered a 306× larger gradient on the next step when one solve was
+observed.
+
+Our scaled run and ablation results (forthcoming) will quantify the
+trade-off between curriculum aggressiveness (M_init, k_steps), token
+penalty (lam_token), and downstream solve rate. We release all code on
+the project's `reward/active-test-selection` branch as a drop-in
+replacement for the existing DeepSWE/SWE-Master binary reward.
+
 ## A. Appendix: reproducibility
 
 All code lives on branch `reward/active-test-selection` of the project repo
