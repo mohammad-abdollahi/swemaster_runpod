@@ -287,10 +287,50 @@ want.)
 
 ### 5.1 Smoke result (single H200, 4 PPO steps, 32-task SWE-rebench)
 
-- Solve rate on train tasks across epochs: TBD
-- Mean trajectory reward: TBD
-- Tokens per trajectory: TBD
-- Gradient stability (non-zero-grad-step ratio, grad-norm mean): TBD
+The smoke was configured to *validate the reward path end-to-end*, not to
+demonstrate strong learning: `AGENT_MAX_STEPS=20` (vs paper's 150),
+`MAX_RESPONSE=12 288`, `TRAIN_BATCH_SIZE=4` (4 unique tasks per step
+× 4 LOOP rollouts each), `TOTAL_TRAINING_STEPS=4`. We expected zero solves
+given the budget; the question was whether the *reward signal moves* and
+whether the *gradient is non-zero*.
+
+**Step 1 metrics (16 trajectories, 4 unique tasks):**
+
+| Metric | Value |
+|---|---|
+| `critic/rewards/mean` | −0.055 |
+| `critic/rewards/min, max` | −0.067, −0.043 |
+| Within-group reward range | ~0.024 (token-penalty driven) |
+| `critic/advantages/min, max` | −0.014, +0.010 |
+| `actor/grad_norm` | 0.001 |
+| `actor/pg_loss` | ≈ 0.0 |
+| `actor/entropy_loss` | 0.254 (uncollapsed) |
+| `batch/solve_none / partial / all` | 4 / 0 / 0 |
+| Trajectory steps mean / max | 11.6 / 20 |
+| Termination | `MAX_STEPS` on every trajectory |
+| Per-traj reward time / env time / llm time | 4.95 s / 181.9 s / 25.7 s |
+| Memory (GPU / RAM) | 119 / 43 GB |
+
+Three observations from this smoke:
+
+1. **The reward signal is non-degenerate.** Even with `frac_solved = 0`
+   for every trajectory (the SFT base does not solve anything in the
+   tight 20-step budget), the token-usage penalty drives a within-group
+   range of ~2.4 cents of reward. Binary baseline would report
+   `(rewards == 0).all()` and contribute zero gradient — see §3.4.
+   Continuous ATS contributes a small but non-zero gradient (grad_norm
+   = 0.001).
+
+2. **The agent uses the active-tests block.** Across the chat_completions
+   for one task (`stix2 / test_observed_data_with_custom_observable_object`),
+   4 of the 20 assistant messages explicitly reference the test name and
+   include search-for-test commands in the bash log. So the prompt
+   injection is *consumed* by the policy, not ignored.
+
+3. **`AGENT_MAX_STEPS=20` is below the threshold for actual solves on this
+   task mix.** Every trajectory hit MAX_STEPS, indicating the budget cut
+   the agent off mid-investigation in most cases. The follow-on
+   experiment (§5.2) uses `AGENT_MAX_STEPS=50`.
 
 ### 5.2 Larger run (once smoke is green)
 
