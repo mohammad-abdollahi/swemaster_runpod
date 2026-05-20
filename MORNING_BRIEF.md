@@ -130,6 +130,17 @@ tensorboard --logdir /home/temp/swemaster_runpod/tensorboard_log
   effect — the active-tests block degenerates to "show all". Confirm the
   scaled run used `swerebench_min_ftp5/`.
 
+## Auto-launch queued
+
+I have a watcher (`wait_and_launch_scaled3.sh`, PID 187969) running in
+the background that polls for the parallel-session training process to
+exit, then fires `run_scaled.sh` to do a clean SWE-Master scaled run.
+When you wake up:
+- If the parallel run finished cleanly, my watcher should have launched
+  scaled-3 automatically. Check `/home/temp/train_active_scaled3.log`.
+- If you killed the parallel run yourself, the watcher will pick up on
+  its next 60s tick and launch scaled-3.
+
 ## Open item: parallel session conflict
 
 There's a **second Claude Code session** running on the same machine
