@@ -50,10 +50,35 @@ parquet (16 train + 4 val tasks, mean `|F|=11.4`). 8 PPO steps, max
 ## When you wake up — first 3 things to read
 
 1. `MORNING_BRIEF.md` — this file
-2. `paper/PAPER_DRAFT.md` — full draft with §5.1 (smoke metrics) + §5.3
-   (binary-baseline counterfactual: 100% ATS vs 50% binary gradient)
-3. `SMOKE_RESULTS_FOR_USER.md` — implementation summary, what changed,
-   honest caveats
+2. `paper/PAPER_DRAFT.md` — full draft (~25 pages): abstract,
+   method, §5.1 smoke metrics, §5.2 scaled run config, §5.3 binary
+   counterfactual (100% ATS vs 0% binary on scaled step 1), §6
+   discussion, §A reproducibility appendix
+3. `SMOKE_RESULTS_FOR_USER.md` — implementation summary, full results
+   table, parallel-session conflict explanation
+
+## What was delivered (checklist)
+
+| Item | Status |
+|---|---|
+| ActiveTestScheduler module + 13 passing unit tests | ✅ |
+| Docker `get_fail_to_pass_status` integration | ✅ |
+| `SWEEnv.reset()` injects `<active_tests>` block | ✅ |
+| `SWEEnv.compute_final_reward()` routes to `terminal_reward()` | ✅ |
+| Mid-episode pytest path (v2, env-var gated) | ✅ (off by default) |
+| Training script with all knobs exposed | ✅ |
+| `run_scaled.sh` (ATS) + `run_baseline.sh` (binary) launchers | ✅ |
+| `MIN_FTP=5` parquet (mean `\|F\|=11.4`) | ✅ |
+| Per-step ATS reward analyzer | ✅ |
+| Binary-baseline counterfactual simulator | ✅ |
+| Agent behavior drift analyzer (pytest rate, first-action mix) | ✅ |
+| Reward+grad-norm+solve-rate plotter | ✅ |
+| ATS-vs-binary variance plotter | ✅ |
+| Paper draft (abstract → conclusions → reproducibility) | ✅ |
+| Branch pushed to GitHub | ✅ (10+ commits) |
+| Smoke result: 3 PPO steps, grad_norm 0.001→0.306→0.165 | ✅ |
+| Scaled-1 result: 2 PPO steps, partial credit + full solves | ✅ |
+| Scaled-2: clean SWE-Master scaled run | ❌ blocked by parallel session |
 
 To inspect the scaled run when you're back:
 
