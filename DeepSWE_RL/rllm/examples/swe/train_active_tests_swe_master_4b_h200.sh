@@ -89,6 +89,9 @@ AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-30}
 TRAJECTORY_TIMEOUT=${TRAJECTORY_TIMEOUT:-1800}
 SAVE_FREQ=${SAVE_FREQ:-10}
 TEST_FREQ=${TEST_FREQ:-10}
+# Hard cap on PPO steps; useful for smoke runs. Empty = unlimited (use
+# total_epochs × steps_per_epoch). For smoke: TOTAL_TRAINING_STEPS=4
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-}
 
 PROJECT_NAME=${PROJECT_NAME:-active_tests_swe_world}
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -107,7 +110,12 @@ echo "ActiveTests: enabled=${RLLM_ACTIVE_TESTS_ENABLED} mid=${RLLM_ACTIVE_TESTS_
 
 # ---- launch ------------------------------------------------------------
 cd "${REPO_DIR}"
+TOTAL_STEPS_ARG=()
+if [[ -n "${TOTAL_TRAINING_STEPS}" ]]; then
+    TOTAL_STEPS_ARG=("trainer.total_training_steps=${TOTAL_TRAINING_STEPS}")
+fi
 exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
+    "${TOTAL_STEPS_ARG[@]}" \
     algorithm.adv_estimator=loop \
     data.train_files="${TRAIN_PARQUET}" \
     data.val_files="${VAL_PARQUET}" \
