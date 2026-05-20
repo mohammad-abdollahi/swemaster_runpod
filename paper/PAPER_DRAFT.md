@@ -400,6 +400,21 @@ policy began emitting shorter responses (consistent with the
 token-penalty term pushing in that direction). It is too early to call
 this convergent behavior — n=16 — but the direction is encouraging.
 
+**Agent behavior drift (from `analyze_behavior_drift.py`):**
+
+| PPO step | mean turns / traj | mean response chars | pytest mention rate | first-action mix (top 2) |
+|---|---|---|---|---|
+| 1 | 11.6 | 5 652 | **69%** | str_replace_editor=11, execute_bash=5 |
+| 2 | 16.8 | 13 199 | **100%** | str_replace_editor=13, execute_bash=3 |
+| 3 | 15.0 | 8 620 | **100%** | str_replace_editor=15, execute_bash=1 |
+
+The PPO updates produce visible policy change beyond reward magnitude.
+The pytest-invocation rate jumps from 69% (5 of 16 trajectories
+never invoked pytest in step 1) to 100% by step 2, and the
+first-action distribution skews further toward edit-first
+(`str_replace_editor`: 11 → 13 → 15 of 16). The "test the patch yourself"
+behavior the active-tests block encourages is observably learned.
+
 ### 5.2 Scaled run (overnight, 8 PPO steps, richer dataset)
 
 After the smoke established the reward path and confirmed first-update
