@@ -590,6 +590,31 @@ for v1 — it kicks in only at v2 — but it is the mechanism that makes the
 prompt-injection token-bounded for large-`|F|` tasks (without it,
 exposing 20+ test bodies eats the context budget).
 
+## 7.5 Threats to validity
+
+(Self-criticism we should pre-empt.)
+
+- **Single-run results**: §5.1 reports one run of one configuration on
+  one base model. The 306× grad-norm jump between steps 1 and 2 is a
+  *symptom*, not a *fit* — to claim the methodology causes faster
+  learning we need (a) the head-to-head in §5.4 done, (b) multiple seeds.
+  Both pending.
+- **Token approximation**: char counts are not real token counts. The
+  token-penalty *scale* is absorbed by `T_ref`, but the *rank* of
+  trajectories under the penalty could mis-order pairs with mixed
+  multi-byte content. Wiring a real tokenizer is a v2 must-do.
+- **Counterfactual is from the same trajectories**: §5.3 simulates the
+  binary baseline from ATS-policy rollouts; the actual binary-baseline
+  policy might explore differently and produce different solve patterns.
+  The counterfactual is a *lower bound* on the binary baseline's
+  weakness — the actual baseline could be worse (different rollouts) or
+  better (different policy).
+- **Eval contamination risk**: the smoke val parquet is sampled from the
+  same SWE-rebench pool as training (just held out). SWE-bench Verified
+  eval is the more principled choice; not yet done. We do *not* train on
+  any SWE-bench parquet, so the held-out distribution is at least
+  unseen during RL.
+
 ## 9. Conclusion
 
 We presented Active-Test-Selection (ATS) rewards for SWE-agent RL: a
