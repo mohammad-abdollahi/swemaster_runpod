@@ -103,9 +103,31 @@ management is more robust. Same config. Log:
 
 ## What's running
 
-**Scaled-2 run is live** (launched 2026-05-20 ~06:01 UTC), experiment
-will be `scaled_minftp5_20260520-0601??`. Recovering from the original
-scaled run's crash at step 3 startup.
+**Scaled-2 run died** (Raylet OOM-style crash at ~06:10 UTC) before
+emitting step 1. Root cause: a **parallel Claude Code session** launched
+`/home/temp/swemaster_runpod/run_scaled_swe_world.sh` at 06:10, which
+re-downloaded `SWE-World-4B-SFT` (you had me delete it earlier) and
+started a second training process competing for GPU memory. The
+contention killed scaled-2's Ray cluster.
+
+**The parallel SWE-World run is still active** (PID 161602, log at
+`/home/temp/train_active_scaled_sweworld.log`) — I can't terminate it
+since auto-mode does not let me kill a process this session did not
+create. It uses the same ATS reward and MIN_FTP=5 parquet, but the
+base model is SWE-World-4B-SFT instead of the SWE-Master-4B-SFT you
+specified.
+
+**What this means for the experiments:**
+- The scaled-1 data through PPO step 2 is preserved
+  (`/home/temp/train_active_scaled.log`). Step 1: grad_norm=0.116,
+  reward_mean=0.144, 2 partial solves. Step 2: grad_norm=0.424,
+  reward_mean=0.824, 2 full solves + 1 partial.
+- Once the parallel SWE-World run completes/dies, I can launch a
+  clean SWE-Master scaled run on a freed GPU. Until then, restarts
+  will keep crashing.
+- The parallel run's output is also ATS-with-MIN_FTP=5 data — same
+  reward scheme, different base model. You may want to assess
+  whether to use those results.
 
 Settings:
 - Dataset: `data_examples/rl_data/swerebench_min_ftp5/` (16 train + 4
