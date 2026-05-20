@@ -17,16 +17,21 @@ Last update: 2026-05-20.
 
 ## Abstract (draft)
 
-Reinforcement learning for software-engineering (SWE) agents — patching real
-GitHub repositories under unit-test verification — currently relies on a
-single bit of feedback: did the agent's submitted patch turn the held-out
-`FAIL_TO_PASS` test suite green at the end of the rollout? That signal is
+Reinforcement learning for software-engineering (SWE) agents — patching
+real GitHub repositories under unit-test verification — currently relies
+on a single bit of feedback per rollout: did the agent's submitted patch
+turn the held-out `FAIL_TO_PASS` test suite green? That signal is
 sparse, expensive (each evaluation runs an entire test container), and
 ignores the natural structure of the verifier: tests are independent
-sub-goals. The binary signal also degenerates under group-baselined
+sub-goals. The binary aggregation also degenerates under group-baselined
 advantage estimators (GRPO/LOOP) on the most common case — all four
-rollouts in a group fail — which we measure empirically to consume ~40%
-of PPO steps with zero gradient on a representative SWE-rebench mix.
+rollouts in a group failed — which we measure to wipe out ~40% of PPO
+steps and contribute zero gradient. In our scaled control experiment
+(SWE-Master-4B-SFT + SWE-rebench, 16 trajectories per step, AGENT_MAX_STEPS
+=50), the binary reward produced reward standard deviation = 0.000 on
+the first PPO step (no rollout fully solved every test); ATS produced
+standard deviation = 1.107 and a non-zero gradient, by combining
+partial credit and a per-trajectory token penalty.
 
 We propose **Active-Test-Selection (ATS) rewards**, a curriculum-aware
 training objective that (i) exposes a bounded, dynamically managed
