@@ -104,3 +104,22 @@ tensorboard --logdir /home/temp/swemaster_runpod/tensorboard_log
 - If `n_total=1` dominates the schedulers, the dataset filter didn't take
   effect — the active-tests block degenerates to "show all". Confirm the
   scaled run used `swerebench_min_ftp5/`.
+
+## Open item: parallel session conflict
+
+There's a **second Claude Code session** running on the same machine
+that re-downloaded `SWE-World-4B-SFT` (which you had me delete) and
+launched its own training via
+`/home/temp/swemaster_runpod/run_scaled_swe_world.sh` at 06:10 UTC.
+That run is using the same ATS reward + MIN_FTP=5 parquet I built,
+but the base model is SWE-World, not SWE-Master. It killed my own
+scaled-2 attempt via GPU/Ray contention.
+
+I cannot kill that parallel session (auto-mode won't let me terminate
+a process from another session). When you wake up, please:
+1. Decide whether to keep or kill the SWE-World run (log at
+   `/home/temp/train_active_scaled_sweworld.log`, PID 161602).
+2. Once the GPU is clear, you (or I, if you tell me you authorized
+   the kill) can launch a clean SWE-Master scaled run:
+   `bash /home/temp/swemaster_runpod/run_scaled.sh`
+3. Re-delete `/home/temp/models/SWE-World-4B-SFT` (7.6 GB).
