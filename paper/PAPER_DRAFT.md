@@ -469,6 +469,22 @@ distinguish from "0": both would map this trajectory to reward 0,
 producing no advantage signal. ATS extracts a clear learning signal
 from the same rollout.
 
+**Counterfactual on the scaled step-1 rollout** (from
+`simulate_binary_baseline.py`):
+
+| Quantity | ATS | binary baseline |
+|---|---|---|
+| reward std across 16 trajectories | **1.107** | **0.000** |
+| groups with all-zero reward | 0 / 4 | **4 / 4** |
+| PPO gradient signal? | yes | **no** |
+
+Every single rollout in scaled-step-1, under the binary baseline,
+would have produced reward 0 (no trajectory solved ALL of its
+`FAIL_TO_PASS`). The variance filter would have triggered on every
+group; gradient would have been zero. ATS produces non-zero gradient on
+the same trajectories thanks to the partial-credit and token-penalty
+terms.
+
 ### 5.3 ATS-vs-binary counterfactual on the smoke log
 
 `simulate_binary_baseline.py` (in repo root) reads the per-trajectory
