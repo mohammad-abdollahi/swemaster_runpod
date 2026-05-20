@@ -582,6 +582,24 @@ Result on the smoke (2 PPO steps × 16 trajectories so far):
 - PPO steps with non-zero reward std under binary: **1/2 (50%)**
 - PPO steps the binary baseline wastes: 1/2
 
+**Stronger headline from the 7-PPO-step SWE-World companion run** (incidental
+data from §5.2bis, same ATS reward + MIN_FTP=5 parquet, base = SWE-World):
+
+| step | ATS reward std | binary std | binary all-zero? | grad_norm (actual ATS run) |
+|---|---|---|---|---|
+| 1 | 0.810 | 0.000 | yes | 0.110 |
+| 2 | 3.754 | 0.242 | no | 0.409 |
+| 3 | 0.015 | 0.000 | yes | 0.002 |
+| 4 | 1.900 | 0.000 | yes | 0.320 |
+| 5 | 3.902 | 0.390 | no | (not extracted) |
+| 6 | 0.402 | 0.000 | yes | (not extracted) |
+| 7 | 3.222 | 0.322 | no | (not extracted) |
+
+**Across 7 PPO steps, the binary baseline would have wasted 4 of 7 (57%)**.
+ATS wasted 0 of 7 (0%). This is the cleanest empirical demonstration in
+our data of why a continuous reward unlocks the full PPO compute budget
+on this task distribution.
+
 This is a direct empirical demonstration of the "always-on gradient"
 property (§6.1) on a real (if small) training run: on step 1, the binary
 baseline produces reward = 0 for every trajectory, the
