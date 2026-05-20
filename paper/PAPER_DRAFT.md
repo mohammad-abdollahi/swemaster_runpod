@@ -15,30 +15,39 @@ single bit of feedback: did the agent's submitted patch turn the held-out
 `FAIL_TO_PASS` test suite green at the end of the rollout? That signal is
 sparse, expensive (each evaluation runs an entire test container), and
 ignores the natural structure of the verifier: tests are independent
-sub-goals.
+sub-goals. The binary signal also degenerates under group-baselined
+advantage estimators (GRPO/LOOP) on the most common case — all four
+rollouts in a group fail — which we measure empirically to consume ~40%
+of PPO steps with zero gradient on a representative SWE-rebench mix.
 
 We propose **Active-Test-Selection (ATS) rewards**, a curriculum-aware
-training objective that (i) exposes a bounded, dynamically managed *subset*
-of the target tests to the policy in its prompt, (ii) replaces the binary
-terminal reward with a continuous credit-assigned signal driven by a
-four-state bandit-style scheduler over the tests (ACTIVE, POOL, COOLDOWN,
-RETIRED), and (iii) explicitly penalizes the prompt-and-completion token
-footprint of the trajectory. On Qwen3-4B (SWE-Master-4B-SFT) trained on
-SWE-rebench with the LOOP advantage estimator, ATS yields {X% better
-solve-rate} while using {Y% fewer training tokens per solved instance}.
+training objective that (i) exposes a bounded, dynamically managed
+subset of the target tests to the policy in its prompt, (ii) replaces
+the binary terminal reward with a continuous credit-assigned signal
+driven by a four-state bandit-style scheduler over the tests (ACTIVE,
+POOL, COOLDOWN, RETIRED), and (iii) explicitly penalizes the
+prompt-and-completion token footprint of the trajectory.
 
 Contributions:
-1. The ATS scheduler and reward function, including a four-state machine
-   with a `solve → cooldown → re-verify` cycle that closes the
+1. **The ATS scheduler and reward function**, including a four-state
+   machine with `solve → cooldown → re-verify` that closes the
    "reward-hacking by transient pass" loophole.
-2. A token-budget term in the reward that makes the agent's prompt-and-rollout
+2. **A token-budget term** that makes the agent's prompt-and-rollout
    footprint an *explicit* training objective rather than a passive cost.
-3. A SWE-rebench setup and ablation suite isolating the contributions of the
+3. **An "always-on gradient" property**: continuous rewards bypass the
+   `(rewards == 0).all()` variance filter built into popular RL
+   libraries (verl/rllm), giving non-zero PPO gradient even on rollout
+   groups where every trajectory fails. Empirically validated on a
+   small-scale H200 smoke run (16-traj all-fail PPO step produces
+   non-zero grad).
+4. **A reproducible ablation suite** isolating the contributions of the
    curriculum, the cooldown re-check, the token penalty, and the dense
-   per-tick signal.
-4. Empirical evidence that exposing the test set to the agent does *not*
-   leak generalization, provided the terminal reward is computed against the
-   full hidden set.
+   per-tick signal, on Qwen3-4B (SWE-Master-4B-SFT) + SWE-rebench with
+   the LOOP advantage estimator.
+5. **Open-source reference implementation** plugging into the
+   DeepSWE/SWE-Master pipeline as a drop-in reward replacement, gated by
+   `RLLM_ACTIVE_TESTS_ENABLED=1` so the binary baseline can be reproduced
+   from the same codebase.
 
 ## 1. Introduction
 
