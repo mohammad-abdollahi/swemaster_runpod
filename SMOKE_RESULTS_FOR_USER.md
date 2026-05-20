@@ -65,10 +65,31 @@ amplifies into LOOP advantage.
 
 ## What's running
 
-A scaled training launch is queued behind the current 4-step smoke. It
-uses `AGENT_MAX_STEPS=50`, `RLLM_ACTIVE_TESTS_W_SOLVE=10.0`,
-`TOTAL_TRAINING_STEPS=8`, `LR=3e-6`. Expected wallclock ~5 hours;
-should be running overnight by the time you read this.
+**Scaled run is live** (launched 2026-05-20 05:36 UTC), experiment
+`scaled_minftp5_20260520-053601` in project `active_tests_swe_master`.
+
+Settings:
+- Dataset: `data_examples/rl_data/swerebench_min_ftp5/` (16 train + 4
+  val; mean `|F| = 11.4`, range 5-37 — much richer partial-credit
+  signal than the smoke's mostly-1-FTP pool).
+- `TOTAL_TRAINING_STEPS=8`, `AGENT_MAX_STEPS=50` (vs smoke's 4 / 20)
+- `RLLM_ACTIVE_TESTS_W_SOLVE=10.0` (vs smoke's 5.0)
+- `LR=3e-6` (vs smoke's 1e-6)
+- `MAX_RESPONSE=16384`
+
+Expected wallclock: ~6 hours (8 PPO steps × ~45 min/step). Log:
+`/home/temp/train_active_scaled.log`.
+
+Status updates will land in this file as PPO steps emit.
+
+### Smoke completion summary
+
+Smoke ran 3 PPO updates + 1 validation pass before exiting cleanly
+(`TOTAL_TRAINING_STEPS=4` cap, the 4th "step" was validation).
+Verified all 4 ActiveTests states (active → cooldown → retired etc.)
+exercise in unit tests; the training loop's three observed PPO steps
+all produced non-zero gradients, with grad_norm scaling with observed
+solves (0/2/1 solves → 0.001/0.306/0.165 grad_norm).
 
 ## Honest caveats
 
