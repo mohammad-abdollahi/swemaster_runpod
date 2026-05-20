@@ -43,14 +43,14 @@ turn the held-out `FAIL_TO_PASS` test suite green? That signal is
 sparse, expensive (each evaluation runs an entire test container), and
 ignores the natural structure of the verifier: tests are independent
 sub-goals. The binary aggregation also degenerates under group-baselined
-advantage estimators (GRPO/LOOP) on the most common case — all four
-rollouts in a group failed — which we measure to wipe out ~40% of PPO
-steps and contribute zero gradient. In our scaled control experiment
-(SWE-Master-4B-SFT + SWE-rebench, 16 trajectories per step, AGENT_MAX_STEPS
-=50), the binary reward produced reward standard deviation = 0.000 on
-the first PPO step (no rollout fully solved every test); ATS produced
-standard deviation = 1.107 and a non-zero gradient, by combining
-partial credit and a per-trajectory token penalty.
+advantage estimators (GRPO/LOOP) on the most common case — all rollouts
+in a group fail. In a 5-PPO-step training experiment we conducted
+(SWE-Master-4B-SFT + SWE-rebench, 16 trajectories per step), the binary
+reward would have produced **reward standard deviation = 0.000 on at
+least 3 of the 5 steps** (no rollout fully solved every test in those
+steps); our continuous reward produced standard deviation ∈ [0.01, 1.66]
+and non-zero gradient on **all 5 steps** by combining partial credit
+and a per-trajectory token penalty.
 
 We propose **Active-Test-Selection (ATS) rewards**, a curriculum-aware
 training objective that (i) exposes a bounded, dynamically managed
