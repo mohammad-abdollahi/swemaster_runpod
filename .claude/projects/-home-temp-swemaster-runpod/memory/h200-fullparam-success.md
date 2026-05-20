@@ -81,19 +81,31 @@ only on steps with within-group reward variance (already seen: step rewards
 0.5 → 0.625 across the 32768 test). More epochs/diverse tasks → more
 variance steps → analyzable learning. See [[training-plan]].
 
-BATCHING (analyzed 2026-05-18; user will launch a batched run next, was
-collecting questions): raising `train_batch_size` 1→N does NOT raise the GPU
-peak — with `ppo_micro_batch_size_per_gpu=1` + `use_dynamic_bsz=False` the
-actor still backprops ONE sequence at a time; bigger batch only adds
-gradient-accumulation micro-steps before `optimizer.step()`. Peak stays the
-deterministic ~128.6 GB (set by per-microbatch token length, not batch). It
-adds NO total compute (rollout work/epoch = num_tasks×n regardless) — it just
-groups trajectories into fewer, statistically richer updates: kills the ~40%
-all-equal-zero-gradient steps, paper-like stable gradients, FEWER slow
-ckpt/val cycles → faster wall-clock. Paper's 32/16 doesn't fit 20 tasks; use
-`train_batch_size=20 ppo_mini_batch_size=5` (whole set/update) or `10/5`. NOT
-yet run — user stopped the batch=1 baseline at epoch 5 step 81/100 (0 errors)
-to document + push first.
+BATCHING APPLIED (2026-05-19): h200 script now defaults to paper-exact
+`train_batch_size=32, ppo_mini_batch_size=16` (env-overridable as
+`TRAIN_BATCH_SIZE`, `PPO_MINI_BATCH_SIZE`). Also paper-matched
+`log_prob_micro_batch_size_per_gpu=4` and `filter_overlong_prompts_workers=32`.
+Memory-free here (ppo_micro_batch_size_per_gpu=1 + use_dynamic_bsz=False →
+actor backprops ONE sequence at a time → peak stays the deterministic
+~128.6 GB regardless of batch; bigger batch only adds gradient-accum
+micro-steps before optimizer.step). Parquet expanded from 20→32 train tasks
+via `N_TRAIN=32 N_VAL=4 MAX_PROBE=200 build_comprehensive_swerebench.py`
+(same path). Default `MAX_RESPONSE` bumped 16384→32768 (the documented cap).
+Not launched yet — user staged for next iteration.
+
+DATASET vs PAPER (verified 2026-05-19 against master branch's authors' 4B
+script): paper's `train_files` = internal
+`SWE_REBENCH_AND_GYM_OOD_RL_ADD_MAKE_TEST_SPEC/train_00000_verl.parquet` =
+**SWE-rebench + SWE-Gym OOD COMBINED** (order-of-thousands of tasks); paper
+`val_files` = **SWE-bench Verified** (the held-out eval distribution). OURS:
+SWE-rebench ONLY (no SWE-Gym component) + 32 task subset + val drawn from
+the same SWE-rebench pool (NOT SWE-bench). Honest diffs: (a) missing SWE-Gym
+OOD source, (b) ~3 orders of magnitude smaller, (c) val is not a fair
+held-out eval (point VAL_PARQUET at a SWE-bench Verified parquet for that).
+For paper-aligned eval add a SWE-bench Verified val parquet; for the
+SWE-rebench+Gym mixture, extend `build_comprehensive_swerebench.py` to also
+ingest SWE-Gym (it has public images via SWE-bench Gym; current builder
+only pulls `nebius/SWE-rebench`).
 
 Artifacts (committed): `train_comprehensive_swerebench_h200.sh` (env-param
 full-param recipe), `search_max_response.sh` (ceiling harness),

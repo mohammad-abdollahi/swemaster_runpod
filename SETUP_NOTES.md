@@ -550,3 +550,97 @@ method + GROUP B batch (train_batch_size=32, ppo_mini_batch_size=16) +
 **max_response_length=32768 (NOT 122880)** + a ≥32-task SWE-rebench parquet.
 The 32B recipe is fully out of scope (64 GPUs; 32B won't fit single-GPU
 full-param PPO under any config).
+
+---
+
+# Paper-faithful hyperparameter update + dataset comparison (2026-05-19)
+
+## Hyperparameters now matched to the paper 4B recipe (except multi-GPU sharding)
+
+`train_comprehensive_swerebench_h200.sh` updated. All paper-exact 4B values
+from `swe_rl_debug_hls_try_arsenal_long_step_and_timeout3600_4b.sh` adopted
+EXCEPT the irreducibly multi-GPU sharding knobs.
+
+| Paper 4B | Ours (1×H200) | status |
+|---|---|---|
+| `train_batch_size=32` | **32** (env `TRAIN_BATCH_SIZE`, default 32) | ✅ matched |
+| `ppo_mini_batch_size=16` | **16** (env `PPO_MINI_BATCH_SIZE`, default 16) | ✅ matched |
+| `ppo_micro_batch_size_per_gpu=1` | 1 | ✅ matched |
+| `rollout.log_prob_micro_batch_size_per_gpu=4` | 4 | ✅ matched |
+| `rollout.log_prob_use_dynamic_bsz=True` | True | ✅ matched |
+| `data.filter_overlong_prompts_workers=32` | 32 | ✅ matched |
+| `data.max_prompt_length=8192` | 8192 | ✅ matched |
+| `rollout.n=4` | 4 | ✅ matched |
+| `agent.max_steps=150 / timeout=3600` | 150 / 3600 | ✅ matched |
+| `total_epochs=5` | 5 | ✅ matched |
+| full-param, optimizer/param offload | same | ✅ matched |
+| `data.max_response_length=122880` | **32768 (CAP — user decision)** | ❌ excluded |
+| `tensor_model_parallel_size=2` | 1 | ❌ needs ≥2 GPUs |
+| `ulysses_sequence_parallel_size=8` | 1 | ❌ needs ≥8 GPUs |
+| `gpu_memory_utilization=0.70` | 0.30 | ⚠️ paper's 0.70 is per-GPU with 16-GPU FSDP-sharded optimizer (~3 GB/GPU); ours holds the full ~64 GB optimizer on 1 GPU, so vLLM gets less |
+
+KEY: the batching changes are **memory-free** here (peak stays the
+deterministic ~128.6 GB regardless of `train_batch_size`, because
+`ppo_micro_batch_size_per_gpu=1` and `use_dynamic_bsz=False` keep the actor
+backprop at one sequence at a time — bigger batch only adds gradient-
+accumulation micro-steps before `optimizer.step()`).
+
+## Dataset comparison vs the paper
+
+**Paper RL training data** (from authors' 4B script
+`...timeout3600_4b.sh`, `train_files=...`):
+`/code/sunshuang/policy_rl/ss_debug/rllm/rllm/data/datasets/SWE_REBENCH_AND_GYM_OOD_RL_ADD_MAKE_TEST_SPEC/train_00000_verl.parquet`
+— **SWE-rebench + SWE-Gym OOD combined**, with `make_test_spec` embedded.
+This path is on the authors' internal infra and not publicly available.
+Validation data: `SWE_BENCH_VERIFIED_TRY_DEBUG/test_00000_verl.parquet` —
+SWE-bench Verified (held-out eval distribution).
+
+**Distribution sizes from README table**:
+| dataset | total | usable rows |
+|---|---|---|
+| SWE-Gym | Real | 2,438 |
+| SWE-rebench | Real | 6,542 |
+
+So the paper's training mixture is order-of-thousands of tasks across BOTH
+sources.
+
+**Our RL training data**
+(`data_examples/rl_data/swerebench_comprehensive/{train,test}_00000_verl.parquet`):
+built by `build_comprehensive_swerebench.py` from **`nebius/SWE-rebench`**
+(the public mirror; `docker_image` IS already the public Docker Hub
+`swerebench/...` image, no rebuild needed).
+
+| dimension | paper | ours |
+|---|---|---|
+| Source distribution | SWE-rebench + SWE-Gym OOD | **SWE-rebench only** (no SWE-Gym component) |
+| Train task count | thousands (combined) | **32** train tasks (filtered: public image exists + shorter problem statement) |
+| Val task count | SWE-bench Verified (the eval distribution) | 4 val tasks from same SWE-rebench pool |
+| Public images | private `harbor.weizhipin.com/arsenal-ai/swerebench/...` | public Docker Hub `swerebench/...` (verified pullable + nested containers run here) |
+| `make_test_spec` embedded | yes | yes (we run the same `mts_swerebench`) |
+| Verl schema | original `scripts/data/swe_dataset.py` schema | same |
+
+**Honest diff:**
+1. **No SWE-Gym OOD component.** Ours is SWE-rebench-only — a meaningful
+   methodological difference vs the paper's mixed distribution. (SWE-Gym has
+   public images too but the build_comprehensive script only pulls
+   nebius/SWE-rebench; adding the SWE-Gym source is a follow-on enhancement.)
+2. **Vastly smaller train set.** 32 tasks vs paper's combined thousands —
+   sufficient for `train_batch_size=32` (1 step/epoch) but a smoke-scale
+   subset, NOT a full paper-scale training run.
+3. **No data leakage:** we do NOT train on SWE-bench (eval distribution);
+   prior memory notes flag SWE-bench as eval-only.
+
+**Important caveat on validation:** the paper validates on SWE-bench Verified
+(separate dataset). Our val_files draw from the same SWE-rebench pool we
+train on — adequate for a smoke-scale learning-signal sanity check but NOT a
+fair held-out evaluation. A proper paper-aligned eval would point
+`VAL_PARQUET` at a SWE-bench Verified parquet (separate from training).
+
+## Parquet expansion + script default change
+
+To enable `train_batch_size=32`, the train parquet was rebuilt with
+`N_TRAIN=32 N_VAL=4 MAX_PROBE=200 build_comprehensive_swerebench.py`
+(overwrites the prior 20-task parquet at the same path).
+
+Default `MAX_RESPONSE` in the h200 script is now **32768** (matching the
+documented cap; was 16384). Other env overrides unchanged.

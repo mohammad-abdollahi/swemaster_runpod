@@ -24,19 +24,29 @@
 #   * agent.max_steps=150, agent.trajectory_timeout=3600
 #   * actor_rollout_ref.rollout.n=4, trainer.total_epochs=5
 #
-# DEVIATED only on pure multi-GPU data-parallel / sequence-sharding knobs the
-# paper ran across 2x8=16 H800 (NOT the method — no quality change at this
-# single-GPU smoke scale):
-#   * train_batch_size 32 -> 1, ppo_mini_batch 16 -> 1   (DP fan-out only)
-#   * max_response_length 122880 -> 16384  (paper's 120K assumes 16-GPU ulysses
-#       sequence-parallel sharding; no SP on 1 GPU. 16384 = 2x the H100 ceiling,
-#       fits in the H200 activation headroom; raise toward 32768 after step:1
-#       validates if VRAM allows. ulysses_sequence_parallel_size stays 1.)
-#   * ppo_max_token_len_per_gpu = 8192 + 16384 = 24576
+# Paper-exact data-parallel knobs adopted (2026-05-19) — these are NOT
+# memory-bound here: ppo_micro_batch_size_per_gpu=1 + use_dynamic_bsz=False
+# means the actor backprops ONE sequence per backward regardless, just with
+# more gradient-accumulation micro-steps before optimizer.step(). Peak stays
+# the deterministic ~128.6 GB. Total rollout compute per epoch unchanged
+# (num_tasks×n either way).
+#   * train_batch_size=32             (paper-exact; needs >=32 train tasks)
+#   * ppo_mini_batch_size=16          (paper-exact)
+#   * log_prob_micro_batch_size_per_gpu=4 (paper-exact; unused w/ dynamic_bsz)
+#   * filter_overlong_prompts_workers=32 (paper-exact)
+#
+# DEVIATED only on irreducibly multi-GPU sharding knobs (paper's 2x8=16 H800):
+#   * max_response_length 122880 -> 32768  (paper's 120K needs ulysses
+#       sequence_parallel_size=8; on 1 GPU the full-param backward of 122K
+#       tokens needs ~150 GB > 143 GB. 32768 is the empirical 143 GB ceiling
+#       — user-confirmed do NOT exceed. ulysses_sequence_parallel_size=1.)
+#   * ppo_max_token_len_per_gpu = 8192 + max_response  (caps the per-microbatch
+#       backward peak; paper's 16500 only fits because ulysses_sp=8 shards
+#       122880/8 ≈ 15360 per GPU. No sharding here → must hold full sequence.)
+#   * tensor_model_parallel_size 2 -> 1, ulysses_sp 8 -> 1  (need >=2/>=8 GPUs)
 #   * gpu_memory_utilization 0.70 -> 0.30  (paper's 0.70 was per-GPU with the
-#       optimizer FSDP-sharded ~3 GB/GPU across 16 GPUs; here the full ~64 GB is
-#       on one GPU during the step. 0.30 ~= 43 GB vLLM; 43 + 64 + ~20 activ/frag
-#       ~= 127 GB < 143 GB. Headroom to raise later.)
+#       optimizer FSDP-sharded ~3 GB/GPU across 16 GPUs; here the full ~64 GB
+#       optimizer state lives on 1 GPU during step, so vLLM gets less budget.)
 #   * RLLM_MAX_ROLLOUT_CONCURRENCY=4  (196 GB RAM holds n=4 SWE containers)
 # Unchanged infra: 1 GPU, no TP/SP, in-repo SWE-rebench parquet, WANDB off
 # (console+tensorboard), local SWE-Master-4B-SFT.
@@ -84,10 +94,16 @@ PYTHON_BIN=${PYTHON_BIN:-/home/temp/venv/bin/python3}
 # Tunables (override via env). max_response is pushed as high as the 143 GB
 # actor-backward peak allows; ppo_max_token_len_per_gpu must be >= the longest
 # single sequence = max_prompt(8192) + max_response.
-MAX_RESPONSE=${MAX_RESPONSE:-16384}
+MAX_RESPONSE=${MAX_RESPONSE:-32768}
 PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
 GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.3}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-5}
+# Paper-exact 4B values (`...timeout3600_4b.sh`): 32 / 16. Memory-free here
+# (micro_batch=1 → grad accumulation only). Requires >=TRAIN_BATCH_SIZE train
+# tasks in the parquet (default parquet has 32; rebuild via
+# build_comprehensive_swerebench.py with N_TRAIN to scale up).
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
 
 PROJECT_NAME="swe_master_comprehensive"
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -109,18 +125,18 @@ exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
     data.train_files="${TRAIN_PARQUET}" \
     data.val_files="${VAL_PARQUET}" \
-    data.train_batch_size=1 \
+    data.train_batch_size=${TRAIN_BATCH_SIZE} \
     data.val_batch_size=1 \
     data.max_prompt_length=8192 \
     data.max_response_length=${MAX_RESPONSE} \
     data.filter_overlong_prompts=True \
-    data.filter_overlong_prompts_workers=1 \
+    data.filter_overlong_prompts_workers=32 \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     actor_rollout_ref.hybrid_engine=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-sum \
-    actor_rollout_ref.actor.ppo_mini_batch_size=1 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE} \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${PPO_MAX_TOKEN_LEN} \
@@ -143,7 +159,7 @@ exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.entropy_coeff=0.0 \
     algorithm.kl_ctrl.kl_coef=0.0 \
