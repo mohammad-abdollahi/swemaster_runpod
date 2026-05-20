@@ -130,6 +130,28 @@ tensorboard --logdir /home/temp/swemaster_runpod/tensorboard_log
   effect — the active-tests block degenerates to "show all". Confirm the
   scaled run used `swerebench_min_ftp5/`.
 
+## Next experiments worth running (if you want to push to a venue)
+
+In rough order of impact-per-hour:
+
+1. **Full ATS-vs-binary head-to-head** at matched compute (`run_baseline.sh`
+   exists for this — just flip `RLLM_ACTIVE_TESTS_ENABLED=0`). Same
+   dataset, same model, same hyperparameters, same seed; only the
+   reward changes. ~6 hours.
+2. **Multiple seeds** of the scaled run (n=3 ideally; n=5 for tier-1
+   venues). Each ~6 hours.
+3. **v2 ablation**: run the same config with
+   `RLLM_ACTIVE_TESTS_MID_EPISODE=1` to enable per-tick pytest. This
+   exercises the curriculum's `solve→cooldown→retire` and `stall→expand`
+   transitions; useful for the §5 ablation table cells we have not
+   filled. Cost: ~3× the wall-clock per trajectory. Plan for ~18 hours.
+4. **Fair held-out eval on SWE-bench Verified**: set `VAL_PARQUET` to a
+   SWE-bench Verified parquet (not yet built; needs a separate
+   `build_swebench_verified_parquet.py`). The current val split is
+   SWE-rebench-Lite, drawn from the same distribution as training.
+5. **Bigger model**: same recipe on 32B (Qwen2.5-Coder-32B SFT). Per
+   §4 of the paper, this needs ≥ 4 H100/H200 GPUs for full-param.
+
 ## Auto-launch queued
 
 I have a watcher (`wait_and_launch_scaled3.sh`, PID 187969) running in
