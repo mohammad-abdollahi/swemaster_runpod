@@ -341,6 +341,37 @@ Three observations from this smoke:
    the agent off mid-investigation in most cases. The follow-on
    experiment (§5.2) uses `AGENT_MAX_STEPS=50`.
 
+**Step-1 → step-2 trajectory reward distribution shift (full step 2 = 16
+trajectories, 2 solves on a single task):**
+
+| Metric | Step 1 | Step 2 | Δ |
+|---|---|---|---|
+| `critic/rewards/mean` | −0.055 | **+0.269** | +0.32 |
+| `critic/rewards/max` | −0.043 | **+2.468** | +2.51 |
+| `critic/rewards/min` | −0.067 | −0.052 | +0.02 |
+| `critic/advantages/max` | +0.010 | **+1.679** | +1.67 |
+| `critic/advantages/min` | −0.014 | **−1.673** | −1.66 |
+| `actor/grad_norm` | **0.001** | **0.306** | ×306 |
+| `actor/pg_loss` | ≈ 0 | **−0.022** | × ~∞ |
+| `actor/entropy_loss` | 0.254 | 0.280 | +0.026 (uncollapsed) |
+| `batch/solve_none / partial / all` | 4 / 0 / 0 | **3 / 1 / 0** | 1 task partially solved |
+| `response_length/clip_ratio` | 0.938 | 0.812 | shorter trajectories |
+| `timing_s/step` | 624 s | 637 s | comparable |
+
+The 306× grad-norm jump (from 0.001 to 0.306) is the direct empirical
+demonstration of the headline claim: a single partial solve in a group
+of 4 rollouts produces *real* PPO gradient under ATS. Under the binary
+baseline this same scenario (3 unique tasks with no solves + 1 unique
+task with mixed rollouts) would, with `rejection_sample=True`, produce
+gradient on only 1 of 4 groups, and zero gradient on the others. ATS
+contributes informative gradient on all four.
+
+A subtler observation: `response_length/clip_ratio` dropped from
+0.938 to 0.812 between steps, suggesting that after one PPO update the
+policy began emitting shorter responses (consistent with the
+token-penalty term pushing in that direction). It is too early to call
+this convergent behavior — n=16 — but the direction is encouraging.
+
 ### 5.2 Larger run (once smoke is green)
 
 - 64+ train tasks, 5 epochs (paper-faithful), comparison vs binary baseline.
