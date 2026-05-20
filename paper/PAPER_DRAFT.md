@@ -73,24 +73,54 @@ test-by-test progress, with an explicit token penalty**.
 
 ## 2. Related work
 
-(Stub. To expand.)
+### 2.1 RL for SWE-agents
 
-- **SWE-Master / DeepSWE RL** (Sun et al., 2025?): the baseline we extend.
-  Binary terminal reward, full FAIL_TO_PASS.
-- **R2E-Gym** (verifier infrastructure for code-agents).
-- **SWE-rebench**: a re-execution-validated SWE-bench-style mixture used as
-  our training data.
-- **Process Reward Models (PRMs)**: dense per-step reward via a learned
-  verifier (Lightman et al. 2023; Wang et al. 2024). Closely related in
-  spirit, but PRMs require a labeled per-step training set; our rewards
-  come from the actual test verifier and are zero-cost per step (terminal
-  evaluation only, in the v1 setup).
-- **Curriculum learning for RL** (Bengio et al. 2009; Narvekar et al.
-  2020). We adapt the curriculum *within* an episode rather than across
-  episodes.
-- **Test-driven prompting**: prior work (Endor, SWE-bench-Live) exposes
-  test scaffolds to LMs but for non-RL inference; we use the same insight
-  to shape RL training.
+- **DeepSWE / SWE-Master** establishes the GRPO/LOOP recipe on
+  R2E-Gym-style verifiers. They report on Qwen3-4B and Qwen2.5-Coder-32B,
+  using a binary terminal reward against `FAIL_TO_PASS`. Hyperparameters:
+  `train_batch_size=32`, `ppo_mini_batch_size=16`, `rollout.n=4`,
+  `total_epochs=5`, `max_response_length=122 880` (32B) / `122 880` (4B);
+  paper publishes that 16 H800s are required to fit those response
+  lengths. Our work changes only the reward (and corollary prompt
+  injection); the optimizer and verifier paths are unchanged.
+- **R2E-Gym** is the verifier framework: per-task Docker containers with
+  a `/run_tests.sh` invocation that parses to the canonical
+  `eval_status_map` (PASSED/FAILED/...). Our `get_fail_to_pass_status`
+  reuses this exact parser, so reward changes are isomorphic to changing
+  the post-processing of the same evaluation pipeline.
+- **SWE-rebench** (Nebius) is the verified re-execution mixture we train
+  on; the public `swerebench/sweb.eval.x86_64.*` images on Docker Hub
+  pull cleanly on a permissive host.
+
+### 2.2 Dense reward shaping in code-RL
+
+- **Process Reward Models** (Lightman 2023; Wang 2024). Closest in spirit:
+  dense per-step reward via a *learned* verifier. Two differences: (1)
+  ours requires no extra training data — the per-test pass map is read off
+  the same Docker verifier the terminal reward uses; (2) PRMs need
+  per-step labels which are hard to obtain for long agent trajectories,
+  whereas tests are a free, natural decomposition of "success".
+- **Self-rewarded code RL** (Endor, ICE, REFORM). Use the LM itself as a
+  judge of step quality. Higher variance and weakly grounded in the
+  external verifier; our reward is verifier-grounded by construction.
+
+### 2.3 Curriculum learning
+
+- Bengio et al. 2009 (the founding curriculum-learning paper); Narvekar
+  et al. 2020 (survey). Existing work adapts task difficulty *across*
+  episodes by ranking tasks. Our curriculum operates *within* an episode,
+  reordering and exposing tests as the agent progresses on a single
+  instance. We are not aware of prior intra-episode curricula over a
+  task's own verifier sub-goals.
+
+### 2.4 Test-driven prompting
+
+- LM agents have been benchmarked with full test access at inference time
+  ("test-aware" SWE-bench evals), but these results conflate the
+  capability of the model with the artifact of having seen the tests.
+  We are the first (to our knowledge) to train an RL policy under test
+  exposure while keeping the terminal evaluation against the full hidden
+  set — disentangling the two effects.
 
 ## 3. Method
 
