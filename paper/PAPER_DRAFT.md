@@ -13,6 +13,25 @@ emphasizes the empirical headline; (3) is descriptive but generic.
 Working draft. Updated continuously as experiments produce numbers.
 Last update: 2026-05-20.
 
+## Table of contents
+
+- [Abstract](#abstract-draft)
+- [§1 Introduction](#1-introduction)
+- [§2 Related work](#2-related-work)
+- [§3 Method](#3-method)
+- [§4 Experimental setup](#4-experimental-setup)
+- [§5 Results](#5-results)
+  - [§5.1 Smoke (3 PPO steps on the original 32-task parquet)](#51-smoke-result-single-h200-4-ppo-steps-32-task-swe-rebench)
+  - [§5.2 Scaled (MIN_FTP=5 parquet)](#52-scaled-run-overnight-8-ppo-steps-richer-dataset)
+  - [§5.2bis Replication on SWE-World base](#52bis-replication-on-a-second-base-model-incidental)
+  - [§5.3 ATS-vs-binary counterfactual](#53-ats-vs-binary-counterfactual-on-the-smoke-log)
+  - [§5.4 Planned head-to-head](#54-planned-full-ats-vs-binary-head-to-head-next-experiment)
+- [§6 Discussion](#6-discussion)
+- [§7 Limitations + threats to validity](#7-limitations-and-future-work)
+- [§8 Why this combination of ideas](#8-the-reward-design-in-context-why-dense--curriculum--token-aware)
+- [§9 Conclusion](#9-conclusion)
+- [§A Reproducibility appendix](#a-appendix-reproducibility)
+
 ---
 
 ## Abstract (draft)
