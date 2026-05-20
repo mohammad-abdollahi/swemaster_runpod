@@ -2,7 +2,7 @@ import os, sys
 import json
 from time import sleep
 import time
-from typing import Any, Optional, List, Tuple, Union
+from typing import Any, Optional, List, Tuple, Union, Dict
 import uuid
 import tempfile
 import docker
@@ -1610,6 +1610,57 @@ class DockerRuntime(ExecutionEnvironment):
         if get_test_output:
             return reward, output
         return reward
+
+    def get_fail_to_pass_status(self, timeout: int = 300) -> Dict[str, bool]:
+        """Run /run_tests.sh and return per-test pass/fail for FAIL_TO_PASS only.
+
+        Used by the active-test-selection reward path (see
+        `runtime/active_tests.py`). Falls back to an empty dict on any error so
+        the scheduler can treat missing tests as "still failing".
+        """
+        try:
+            if self.swebench_verified or self.swerebench or self.swegym:
+                test_ids = list(self.test_spec.FAIL_TO_PASS)
+            elif self.swesmith:
+                test_ids = list(self.ds.get("FAIL_TO_PASS", []))
+            else:
+                test_ids = []
+            if not test_ids:
+                return {}
+            out, _ = self.run("/run_tests.sh", timeout=timeout)
+            if self.swebench_verified:
+                eval_status_map, _ = self.get_logs_eval(self.test_spec, out)
+            elif self.swerebench:
+                eval_status_map, _ = get_logs_eval_swerebench(self.test_spec, out)
+            elif self.swegym:
+                eval_status_map, _ = get_logs_eval_swegym(self.test_spec, out)
+            elif self.swesmith:
+                eval_status_map = self.parse_logs(out) or {}
+            else:
+                eval_status_map = {}
+            pass_map: Dict[str, bool] = {}
+            for tid in test_ids:
+                status = (eval_status_map or {}).get(tid, "")
+                pass_map[tid] = str(status).upper() == "PASSED"
+            return pass_map
+        except Exception as e:
+            self.logger.info(f"get_fail_to_pass_status error: {repr(e)}")
+            return {}
+
+    def get_fail_to_pass_ids(self) -> List[str]:
+        """Return the FAIL_TO_PASS list for the current task across flavors.
+
+        Companion to `get_fail_to_pass_status`, used by the active-test scheduler
+        to know the full universe of tests for an episode.
+        """
+        if self.swebench_verified or self.swerebench or self.swegym:
+            try:
+                return list(self.test_spec.FAIL_TO_PASS or [])
+            except Exception:
+                return []
+        if self.swesmith:
+            return list(self.ds.get(FAIL_TO_PASS, []) or [])
+        return []
 
     def _calculate_reward(self, get_test_output=False, timeout: int = 300) ->  Union[float, Tuple[float, str]]:
         if self.swebench_verified:
