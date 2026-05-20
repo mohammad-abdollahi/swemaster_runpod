@@ -312,10 +312,46 @@ wrong and we'll revise.)
 
 ## 7. Status / next step
 
-- Branch `reward/active-test-selection` created off `setup/runpod-h200`.
+- Branch `reward/active-test-selection`, parent `setup/runpod-h200`.
 - This doc lives at `REWARD_ACTIVE_TEST_SELECTION.md` in the repo root.
-- No source under the training/runtime packages has been edited.
-- Next concrete action when we resume implementation: write
-  `R2E-Gym/src/r2egym/agenthub/runtime/active_tests.py` with the scheduler and a
-  unit test exercising the four state-machine transitions, before touching
-  Docker or PPO wiring.
+- Implementation status (2026-05-20):
+
+| Item | State |
+|------|-------|
+| Scheduler module + 13 unit tests | shipped (`R2E-Gym/.../active_tests.py`) |
+| Docker pass-map exposure | shipped (`DockerRuntime.get_fail_to_pass_status`) |
+| `SWEEnv.reset()` injects prompt block | shipped |
+| `SWEEnv.compute_final_reward()` routes through `terminal_reward(...)` | shipped |
+| `SWEEnv.step()` mid-episode ticks (env-var gated) | shipped, default off |
+| `train_active_tests_swe_master_4b_h200.sh` | shipped, default ON for ATS |
+| First smoke training run launched (4 PPO steps) | running |
+| Larger run / ablations | pending |
+
+- Next concrete action: once the smoke confirms learning (non-zero
+  trajectory reward variance + non-zero grad-norm), scale to 32-task
+  `train_batch_size=32` with `TOTAL_EPOCHS=5` (paper-faithful) and run the
+  full ablation table from `paper/PAPER_DRAFT.md`.
+
+## 8. Decisions / changes made during implementation
+
+Tracking the things that drifted from the §3 design once code met reality:
+
+- **Mid-episode pytest is off by default.** Running `/run_tests.sh` every
+  `k_steps` (the v2 path) multiplies rollout time by an order of magnitude
+  (each Docker pytest invocation is minutes). We ship v1 by default:
+  active-tests block in the prompt + partial-credit terminal reward, no
+  per-tick pytest. v2 stays in the codebase behind
+  `RLLM_ACTIVE_TESTS_MID_EPISODE=1` for ablation studies.
+- **Token budget is char-based, not tokenizer-based.** `tokens_used_approx`
+  counts characters of the task instruction and all observations. This is
+  ~4× the real token count but the absolute scale is absorbed by `token_ref`
+  (default 32 000) and `lam_token`. A future commit can wire the actual
+  tokenizer through if numerical precision matters.
+- **No `subset pytest` shim yet.** v2 ticks invoke the *full* test script
+  and post-filter the pass map. The faster `pytest -k <ids>` path remains a
+  TODO; not blocking v1.
+- **`PASS_TO_PASS` is intentionally ignored** by the scheduler. Those are
+  regression-guard tests; they belong in the terminal full-suite evaluation
+  (which `compute_final_reward()` reaches via the legacy
+  `_calculate_reward_swerebench` path under the hood), not in the
+  curriculum.
