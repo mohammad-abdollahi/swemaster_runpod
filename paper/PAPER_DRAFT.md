@@ -527,10 +527,30 @@ but tractable for ablations.
 The SWE-rebench pool we use is skewed: 18/32 tasks have `|F|=1`,
 7/32 have `|F|=2`, only 7/32 have `|F| ≥ 3` (max 37). With `|F|=1` the
 partial-credit signal degenerates to binary in spirit (the only
-non-binary terms are `r_token` and the optional `eta/(n+1)`). A
-follow-on dataset with `|F| ≥ 5` filter (see
-`MIN_FTP=5 build_comprehensive_swerebench.py`) is planned to exercise
-the full continuous-reward regime.
+non-binary terms are `r_token` and the optional `eta/(n+1)`). We built
+a `MIN_FTP=5` filtered variant (the scaled run §5.2 uses this; 16 train
++ 4 val tasks, mean `|F|=11.4`, range 5-37) so the continuous reward
+can take its full range during scaled training.
+
+### 6.5 Initial-active subset choice
+
+`M_init=2` of `|F|=11.4` is a meaningful curriculum, but our v1
+selection rule is "the first 2 IDs in `FAIL_TO_PASS`". This is
+deterministic and ignores any difficulty signal. A natural extension:
+sort by (i) length of test source code, (ii) historical solve rate on
+this test from prior runs, or (iii) random. For the paper's headline
+runs the deterministic rule is sufficient — but ablating against random
+selection on a fixed-task split is the v2 follow-up.
+
+### 6.6 Compatibility with stepwise-advantage path
+
+The verl/rllm trainer supports a `use_stepwise_advantage` mode
+(`agent_ppo_trainer.py:208`) that assigns separate advantage to each
+agent step rather than aggregating to the trajectory level. Our reward
+fits cleanly: the env's per-step `reward` (zero in v1, dense in v2) is
+already what stepwise advantage would consume, and the terminal
+`compute_final_reward()` returns the same scalar the trajectory mode
+expects. No code change needed to interoperate.
 
 ## 7. Limitations and future work
 
