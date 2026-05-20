@@ -1,6 +1,14 @@
 # Active-Test Curriculum Rewards for SWE-Agent RL
 
-**(working title; final = "Curriculum-Aware Test Selection for Sample- and Token-Efficient RL on Software Engineering Tasks")**
+**Title candidates** (pick one before submission):
+1. "Active-Test-Selection Rewards: Always-On Gradient for SWE-Agent RL"
+2. "Continuous Test-Subset Rewards Break the All-Zero Gradient Bottleneck
+   in SWE-Agent RL"
+3. "Curriculum-Aware Test Selection for Sample- and Token-Efficient RL on
+   Software Engineering Tasks"
+
+(1) emphasizes the methodological contribution most distinctively; (2)
+emphasizes the empirical headline; (3) is descriptive but generic.
 
 Working draft. Updated continuously as experiments produce numbers.
 Last update: 2026-05-20.
