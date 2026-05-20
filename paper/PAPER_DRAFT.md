@@ -199,20 +199,45 @@ to the issue description. Just test identifiers in v1; bodies optional.
 
 ## 4. Experimental setup
 
+### 4.1 Model and infrastructure
+
 - **Base model**: Qwen3-4B SFT'd on SWE traces (RUC-AIBOX/SWE-Master-4B-SFT,
-  HF Feb 2026).
-- **Training data**: SWE-rebench public mirror (`nebius/SWE-rebench`),
-  32 instances filtered to ones with pullable public images. Validation: 4
-  held-out from same pool (smoke); SWE-bench Verified for fair comparison
-  (planned).
-- **RL algorithm**: LOOP (leave-one-out, sibling of GRPO), full-param
-  4B PPO, n=4 group rollouts, single H200 (143 GB), max_response_length
-  16384 (smoke) / 32768 (full).
-- **Baselines**:
-  1. Binary terminal reward (current SWE-Master recipe).
-  2. Partial-credit terminal only (ATS without prompt injection).
-  3. ATS, no token penalty.
-  4. ATS, full.
+  HF Feb 2026). Full-parameter PPO; no LoRA.
+- **Hardware**: single NVIDIA H200 (143 GB VRAM, 196 GB host RAM, 16 vCPU,
+  passwordless docker). The full paper recipe targets 16×H800; we
+  reproduce all paper-faithful knobs except the irreducibly multi-GPU
+  sharding (`tensor_model_parallel_size>1`, `ulysses_sequence_parallel_size
+  >1`) and the 122 880-token `max_response_length` — capped at 32 768 by
+  the H200's single-GPU full-param backward memory ceiling.
+- **Rollout sandbox**: per-task Docker containers from public
+  `swerebench/sweb.eval.x86_64.*` images. Concurrency 4 (one per CPU
+  cohort).
+
+### 4.2 Data
+
+- **Training**: SWE-rebench public mirror (`nebius/SWE-rebench`), filtered
+  to instances with pullable public images, shorter problem statements
+  (token budget), and a non-empty FAIL_TO_PASS. We use 32 instances for the
+  smoke and a 64-instance scaled run.
+- **Validation (smoke)**: 4 held-out instances from the same pool. This is
+  adequate for sanity but **NOT** a fair held-out evaluation — for the
+  paper headline, val should be SWE-bench Verified (a separate
+  distribution). The training/eval contamination question is open and
+  flagged in §7.
+
+### 4.3 Reward configurations evaluated
+
+| Tag | description |
+|---|---|
+| `binary` | original SWE-Master recipe — terminal `int(all FAIL_TO_PASS resolved)` |
+| `ATS-v1` | active subset in prompt + partial credit terminal − token penalty (default) |
+| `ATS-v1 -tok` | ATS-v1 with `lam_token=0` |
+| `ATS-v1 -prompt` | partial-credit terminal only; no active-tests block injected |
+| `ATS-v2 -tick=k` | ATS-v1 plus mid-episode pytest every `k` agent steps |
+
+All run with identical optimizer settings (`adv_estimator=loop`, `n=4`,
+`lr=1e-6`, `clip_ratio_high=0.28`, `kl_loss_coef=0`,
+`entropy_coeff=0`).
 
 ## 5. Results
 
