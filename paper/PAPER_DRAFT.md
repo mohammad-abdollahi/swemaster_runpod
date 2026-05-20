@@ -438,6 +438,29 @@ exercises the "always-on gradient" claim at scale.
 
 Results land in §5.4 once the run completes (~6 hours from launch).
 
+**Step 1 preliminary (scaled, 16 trajectories on MIN_FTP=5 parquet):**
+
+| Metric | Smoke step 1 | Scaled step 1 |
+|---|---|---|
+| `critic/rewards/mean` | −0.055 | **+0.144** |
+| `critic/rewards/max` | −0.043 | **+1.611** |
+| `critic/advantages/max / min` | +0.010 / −0.014 | **+1.120 / −1.123** |
+| `actor/grad_norm` | **0.001** | **0.116** |
+| `actor/pg_loss` | ≈ 0 | **−0.024** |
+| `batch/solve_none / partial / all` | 4 / 0 / 0 | **3 / 1 / 0** |
+| `traj/steps_mean` | 11.6 | **26.4** |
+| `traj/total_response_tokens_num_mean` | 12 276 | 16 194 |
+| `timing_s/step` | 624 s | 592 s |
+
+Right out of the gate, scaled-step-1 already shows partial credit
+(`critic/rewards/max=1.611` is a trajectory that solved ~16% of its
+FAIL_TO_PASS — neither all-pass nor all-fail), producing a ~116× larger
+PPO gradient than the smoke's step-1 baseline. Crucially, the
+partial-credit reward is *exactly* what the binary baseline cannot
+distinguish from "0": both would map this trajectory to reward 0,
+producing no advantage signal. ATS extracts a clear learning signal
+from the same rollout.
+
 ### 5.3 ATS-vs-binary counterfactual on the smoke log
 
 `simulate_binary_baseline.py` (in repo root) reads the per-trajectory
