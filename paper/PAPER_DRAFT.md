@@ -385,12 +385,41 @@ Expected wallclock ≈ 5 hours on a single H200 with concurrency 4. The
 goal is to demonstrate trajectory-reward **trend** across 8 PPO steps,
 not just first-update signal.
 
-### 5.3 Planned: ATS-vs-binary head-to-head (TODO)
+### 5.3 ATS-vs-binary counterfactual on the smoke log
 
-Identical optimizer/data/config, only `RLLM_ACTIVE_TESTS_ENABLED` flips
-between 1 and 0. The headline-result table for the paper:
+`simulate_binary_baseline.py` (in repo root) reads the per-trajectory
+ATS terminal events and computes what the binary-baseline reward would
+have been (`1 if frac_solved ≥ 1 else 0`) for each trajectory, then
+asks: which PPO steps would have had non-zero reward variance under each
+scheme?
 
-| Run | grad-norm mean | non-zero-grad-step ratio | first solve seen at step | wall-clock per step |
+Result on the smoke (2 PPO steps × 16 trajectories so far):
+
+| step | n | ATS reward std | bin-baseline reward std | groups with all-zero bin reward | bin step contributes gradient? |
+|---|---|---|---|---|---|
+| 1 | 16 | 0.0140 | 0.0000 | **4/4** | **NO** |
+| 2 | 16 | 1.6577 | 0.3307 | 2/4 | yes (partial) |
+
+**Headline counts**:
+- PPO steps with non-zero reward std under ATS: **2/2 (100%)**
+- PPO steps with non-zero reward std under binary: **1/2 (50%)**
+- PPO steps the binary baseline wastes: 1/2
+
+This is a direct empirical demonstration of the "always-on gradient"
+property (§6.1) on a real (if small) training run: on step 1, the binary
+baseline produces reward = 0 for every trajectory, the
+`(rewards == 0).all()` filter triggers for all four groups, and either
+zero gradient is computed (rejection_sample off) or the entire batch is
+skipped (rejection_sample on). ATS still produces non-zero std (from
+the token term) and non-zero gradient.
+
+### 5.4 Planned: full ATS-vs-binary head-to-head (next experiment)
+
+Identical optimizer / data / config, only `RLLM_ACTIVE_TESTS_ENABLED`
+flips between 1 and 0. Same number of PPO steps and trajectories. Same
+random seed. The headline-result table for the paper:
+
+| Run | mean grad-norm | non-zero-grad-step ratio | first solve seen at step | wall-clock per step |
 |---|---|---|---|---|
 | binary baseline | TBD | TBD | TBD | TBD |
 | ATS v1 | TBD | TBD | TBD | TBD |
