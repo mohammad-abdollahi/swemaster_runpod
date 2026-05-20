@@ -42,34 +42,51 @@ Contributions:
 
 ## 1. Introduction
 
-The state of the art in SWE-agent RL — DeepSWE, SWE-Master, R2E-Gym —
-trains a policy to act in a Docker sandbox containing a buggy repository,
-producing a patch that ultimately must turn a held-out test suite from
-failing to passing. The reward function used in every published recipe we
-have inspected is, modulo cosmetic variation:
+Reinforcement learning for software-engineering agents has matured into a
+recognizable recipe: pretrain a coder model, supervised fine-tune (SFT) on
+patch-style traces, then GRPO/LOOP-tune against a verifier that runs the
+target repository's unit tests in a sandboxed Docker container. The DeepSWE
+and SWE-Master recipes (Sun et al. 2025; Anthropic 2026) demonstrate that
+this loop produces real improvements on SWE-bench. They also all share an
+identical reward function, modulo cosmetic variation:
 
 ```
-r = int(all FAIL_TO_PASS resolved at end of trajectory)
+r(τ) = int(all FAIL_TO_PASS tests resolved at end of trajectory τ)
 ```
 
-This has three known pathologies:
+A patch resolving every failing test scores 1; a patch resolving 199 of
+200 tests scores 0. This binary aggregation has three pathologies we
+believe are limiting progress:
 
-1. **Credit assignment.** A 50-200 step rollout (file reads, edits, bash
-   invocations) gets one bit at the end. GRPO/LOOP-style group baselines
-   collapse to zero advantage whenever all rollouts in a group succeed or
-   all fail simultaneously — i.e., on most easy and most hard tasks.
-2. **Verifier opacity.** The agent never sees the tests it is supposed to
-   satisfy. It must reverse-engineer the spec from the natural-language
-   issue plus repo exploration. This is unrealistic relative to how human
-   engineers work (TDD) and wastes large fractions of the rollout on
-   spec-discovery.
+1. **Credit assignment is sparse.** A 50-200 step rollout (file reads,
+   edits, bash invocations) collapses to one bit at the end. GRPO/LOOP
+   group baselines vanish (advantage = 0) whenever all rollouts in a
+   group succeed or all fail. Empirically — in our own H200 baseline runs
+   under this recipe — ≈40% of PPO steps see all-zero advantage and
+   contribute no gradient signal.
+2. **The verifier is opaque to the policy.** The agent has no access to
+   the tests it must satisfy. It must reverse-engineer the
+   specification from the natural-language issue plus repo exploration.
+   This is unrealistic relative to how human engineers actually work
+   (read the failing test, then fix it) and wastes substantial fractions
+   of the trajectory on spec-discovery actions.
 3. **Token cost is unmeasured.** Prompts ingest entire files; completions
-   blow past 16K-32K tokens. Compute scales as the square of context length,
-   yet nothing in the objective rewards parsimony.
+   stretch to 16K-32K tokens. Inference and training cost scale super-
+   linearly in sequence length, yet nothing in the objective rewards
+   parsimony.
 
-We claim all three are addressable with a single mechanism: **expose a
-bounded subset of the tests to the policy each rollout, and reward
-test-by-test progress, with an explicit token penalty**.
+We propose a single mechanism that targets all three: expose a
+bounded subset of the tests to the policy each rollout, reward
+test-by-test progress (continuous partial credit), and add an explicit
+token-usage penalty. We call this **Active-Test-Selection (ATS) reward**.
+A bandit-style scheduler manages which tests are in the visible "active"
+set as the rollout proceeds — solved tests enter a cooldown and are
+re-verified to close a "transient pass" loophole; stalled tests are
+augmented by promoting hidden tests from a pool.
+
+In the language of curriculum learning, the curriculum is *within* the
+episode, not across episodes — a structure we have not seen in prior
+SWE-agent RL or LM-RL more broadly.
 
 ## 2. Related work
 
