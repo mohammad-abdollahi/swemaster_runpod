@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Active-Test-Selection reward — SWE-World-4B-SFT base on a single H200.
+# Active-Test-Selection reward — SWE-Master-4B-SFT base on a single H200.
 #
 # This script is the H200 4B full-param recipe (see
 # train_comprehensive_swerebench_h200.sh) with three changes:
-#   1. Base policy: RUC-AIBOX/SWE-World-4B-SFT (user-requested).
+#   1. Base policy: RUC-AIBOX/SWE-Master-4B-SFT (the established base for
+#      this branch; see SETUP_NOTES.md). Local snapshot at
+#      /home/temp/models/SWE-Master-4B-SFT.
 #   2. Reward: ActiveTestScheduler — partial-credit (frac of FAIL_TO_PASS
 #      solved) plus token-usage penalty plus, optionally, dense per-tick
 #      rewards (alpha solves, beta stall-expand, delta regression, gamma step,
@@ -69,7 +71,7 @@ export RAY_ADDRESS="auto"
 
 # ---- paths -------------------------------------------------------------
 REPO_DIR=${REPO_DIR:-/home/temp/swemaster_runpod}
-MODEL_PATH=${MODEL_PATH:-/home/temp/models/SWE-World-4B-SFT}
+MODEL_PATH=${MODEL_PATH:-/home/temp/models/SWE-Master-4B-SFT}
 TRAIN_PARQUET=${TRAIN_PARQUET:-${REPO_DIR}/data_examples/rl_data/swerebench_comprehensive/train_00000_verl.parquet}
 VAL_PARQUET=${VAL_PARQUET:-${REPO_DIR}/data_examples/rl_data/swerebench_comprehensive/test_00000_verl.parquet}
 PYTHON_BIN=${PYTHON_BIN:-/home/temp/venv/bin/python3}
