@@ -400,18 +400,28 @@ policy began emitting shorter responses (consistent with the
 token-penalty term pushing in that direction). It is too early to call
 this convergent behavior — n=16 — but the direction is encouraging.
 
-### 5.2 Scaled run (overnight, 8 PPO steps)
+### 5.2 Scaled run (overnight, 8 PPO steps, richer dataset)
 
 After the smoke established the reward path and confirmed first-update
-gradient signal, we queue a scaled run with:
-- `AGENT_MAX_STEPS=50` (vs 20 smoke; more chances for actual solves)
-- `RLLM_ACTIVE_TESTS_W_SOLVE=10.0` (vs 5.0 smoke; bigger reward jump per solve)
-- `LR=3e-6` (vs 1e-6 smoke)
-- `TOTAL_TRAINING_STEPS=8`, `MAX_RESPONSE=16384`
+gradient signal, we queue a scaled run with the following differences:
 
-Expected wallclock ≈ 5 hours on a single H200 with concurrency 4. The
-goal is to demonstrate trajectory-reward **trend** across 8 PPO steps,
-not just first-update signal.
+| Knob | Smoke | Scaled |
+|---|---|---|
+| Train parquet | `swerebench_comprehensive` (32 tasks, median `\|F\|=1`) | **`swerebench_min_ftp5`** (16 tasks, mean `\|F\|=11.4`, range 5-37) |
+| `AGENT_MAX_STEPS` | 20 | **50** |
+| `RLLM_ACTIVE_TESTS_W_SOLVE` | 5.0 | **10.0** |
+| Learning rate | 1e-6 | **3e-6** |
+| PPO steps | 4 | **8** |
+| `MAX_RESPONSE` | 12 288 | 16 384 |
+
+The dataset shift is the most consequential: with `|F| ≥ 5` per task,
+the continuous partial-credit reward has at least 6 distinct values
+(0/5, 1/5, ..., 5/5) per task — vs the smoke parquet where 25 of 32
+tasks had at most 2 fail-to-pass tests, so partial credit was at most
+0/0.5/1 (essentially binary). This is the configuration that actually
+exercises the "always-on gradient" claim at scale.
+
+Results land in §5.4 once the run completes (~6 hours from launch).
 
 ### 5.3 ATS-vs-binary counterfactual on the smoke log
 
