@@ -76,10 +76,36 @@ trajectories):
 ATS produces non-zero reward std on 3 of 3 PPO steps. Binary baseline
 would have produced gradient on 2 of 3 (waste of step 1).
 
+## Scaled run results (steps 1-2 before transient crash; restarted)
+
+The scaled run hit a process-management hiccup at step 3 startup
+(background shell wrapper died; OS-level cascade killed Ray + Docker
+containers). Steps 1-2 produced clean data and the headline numbers
+the paper wants:
+
+| Metric | Step 1 | Step 2 | Δ |
+|---|---|---|---|
+| `critic/rewards/mean` | +0.144 | **+0.824** | × 5.7 |
+| `critic/rewards/max` | +1.611 (partial) | **+4.944** (full solve, halved by MAX_STEPS) | — |
+| `actor/grad_norm` | 0.116 | **0.424** | × 3.6 |
+| `batch/solve_partial / none` | 1 / 3 | **2 / 2** | doubled |
+| ATS within-step reward std | 1.107 | ~1.5 | similar |
+| Binary baseline reward std (simulated) | **0.000** | ~0.5 | ATS unique on step 1 |
+
+Step 1 alone is a clean ATS-vs-binary demonstration: simulated binary
+reward `(r=1 if all FAIL_TO_PASS pass else 0)` produces std = 0.000
+across all 16 trajectories (none fully solved), so the binary baseline
+gets zero PPO gradient. ATS std = 1.107 → real gradient (`grad_norm=0.116`).
+
+The scaled-2 relaunch is now running (post-crash) under nohup so process
+management is more robust. Same config. Log:
+`/home/temp/train_active_scaled2.log`.
+
 ## What's running
 
-**Scaled run is live** (launched 2026-05-20 05:36 UTC), experiment
-`scaled_minftp5_20260520-053601` in project `active_tests_swe_master`.
+**Scaled-2 run is live** (launched 2026-05-20 ~06:01 UTC), experiment
+will be `scaled_minftp5_20260520-0601??`. Recovering from the original
+scaled run's crash at step 3 startup.
 
 Settings:
 - Dataset: `data_examples/rl_data/swerebench_min_ftp5/` (16 train + 4
