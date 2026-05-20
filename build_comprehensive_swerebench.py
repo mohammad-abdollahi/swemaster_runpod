@@ -15,7 +15,14 @@ from rllm.agents.system_prompts import SWE_SYSTEM_PROMPT, SWE_USER_PROMPT
 N_TRAIN = int(os.environ.get("N_TRAIN", "20"))
 N_VAL = int(os.environ.get("N_VAL", "4"))
 MAX_PROBE = int(os.environ.get("MAX_PROBE", "120"))
-OUT = "/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_comprehensive"
+# Minimum FAIL_TO_PASS size to keep — useful for the active-test-selection
+# reward studies, where small FAIL_TO_PASS degenerates the partial-credit
+# signal to near-binary. Default 0 keeps the legacy behavior.
+MIN_FTP = int(os.environ.get("MIN_FTP", "0"))
+OUT = os.environ.get(
+    "OUT_DIR",
+    "/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_comprehensive",
+)
 os.makedirs(OUT, exist_ok=True)
 
 def image_exists(img):
@@ -44,6 +51,16 @@ for c, i in enumerate(idx[:MAX_PROBE]):
         img = img + ":latest"
     if not image_exists(img):
         continue
+    # Optional FAIL_TO_PASS-size filter for ATS studies.
+    if MIN_FTP > 0:
+        ftp = r.get("FAIL_TO_PASS") or []
+        if isinstance(ftp, str):
+            try:
+                ftp = json.loads(ftp)
+            except Exception:
+                ftp = []
+        if len(ftp) < MIN_FTP:
+            continue
     r["docker_image"] = img
     r.pop("ip", None)
     try:
