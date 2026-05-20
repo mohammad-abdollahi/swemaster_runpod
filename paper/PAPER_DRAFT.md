@@ -124,6 +124,29 @@ test-by-test progress, with an explicit token penalty**.
 
 ## 3. Method
 
+### 3.0 Notation and problem setting
+
+A training instance is a tuple `(R, P, F)` where `R` is a buggy repository
+snapshot, `P` is a natural-language issue description, and `F` is the
+hidden set of tests that must transition from FAIL to PASS for the patch
+to be accepted. A *rollout* is a sequence of agent actions
+`a_1, ..., a_T` (bash invocations, file edits, finishes) acting on `R` via
+a Docker sandbox. The verifier returns a pass map
+`V: F → {pass, fail}` from running the test suite against the patched
+repository.
+
+The baseline reward is `R_binary(τ) = ∏_{t∈F} V(t)` — i.e., 1 if every
+test passes, else 0. Our reward is
+
+```
+R_ATS(τ) = w_solve · (1/|F|) ·  Σ_{t∈F} V(t)
+         − lam_token · tokens(τ) / T_ref
+         +   (mid-episode dense terms if enabled)
+```
+
+The first term gives continuous partial credit; the second penalizes long
+trajectories.
+
 ### 3.1 The four-bucket state machine
 
 For each training instance, the FAIL_TO_PASS list F is partitioned every
@@ -239,6 +262,34 @@ want.)
 - Token penalty weight `lam_token` is brittle; tasks with long-by-necessity
   patches get punished unfairly. A per-task normalized variant is a TODO.
 - We evaluate on SWE-rebench only; SWE-bench Verified eval planned.
+- **Small-FAIL_TO_PASS degeneracy.** When `|F| ≤ M_init` the active set
+  contains everything; the curriculum has nothing to mask. Our smoke data
+  (SWE-rebench filtered to public-image-pullable) skews toward `|F|=1-5`,
+  so the bandit-scheduler aspect of the method is exercised lightly. A
+  follow-on filter on `|F| ≥ 8` would isolate the curriculum's effect.
+- **Token approximation.** We count characters, not real tokens, in the
+  budget term. Off by ~4× from the actual tokenizer. Empirically fine
+  because the *scale* is absorbed by `T_ref` and `lam_token`, but a true
+  per-tokenizer count would tighten the analysis.
+
+## 8. The reward design in context: why dense + curriculum + token-aware
+
+A natural objection to ATS is that it has three knobs (curriculum,
+partial credit, token penalty) and the contribution of any one is
+unclear without ablations. We address this with the table in §5.3.
+Beyond that, the three ideas are not arbitrary — each addresses one of
+the three baseline pathologies stated in §1:
+
+| Pathology | Mechanism that addresses it |
+|---|---|
+| Credit assignment | Partial credit over `F` (continuous terminal reward) |
+| Verifier opacity | Prompt injection of an active test subset |
+| Unmeasured token cost | Explicit `-lam_token · tokens / T_ref` term |
+
+The curriculum (cooldown / stall-expand / retire) is technically optional
+for v1 — it kicks in only at v2 — but it is the mechanism that makes the
+prompt-injection token-bounded for large-`|F|` tasks (without it,
+exposing 20+ test bodies eats the context budget).
 
 ## A. Appendix: reproducibility
 
