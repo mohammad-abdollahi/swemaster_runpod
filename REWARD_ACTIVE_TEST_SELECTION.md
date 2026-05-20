@@ -332,6 +332,26 @@ wrong and we'll revise.)
   `train_batch_size=32` with `TOTAL_EPOCHS=5` (paper-faithful) and run the
   full ablation table from `paper/PAPER_DRAFT.md`.
 
+### Empirical results captured (2026-05-20)
+
+Five PPO steps on `SWE-Master-4B-SFT` across two runs (smoke 4-task
+parquet + scaled MIN_FTP=5 parquet). Concrete numbers in
+`paper/PAPER_DRAFT.md` §5; brief recap:
+
+- Smoke (3 PPO steps): `grad_norm` went **0.001 → 0.306 → 0.165**, with
+  2 + 1 + 0 full solves; pytest invocation rate in trajectories rose
+  69% → 100% → 100%.
+- Scaled (2 PPO steps before a process-management crash): `grad_norm`
+  went **0.116 → 0.424**, with 2 + 3 partial-and-full solves; reward
+  mean +0.144 → +0.824.
+- Binary-baseline counterfactual on the same trajectories: would have
+  produced gradient on 2/5 PPO steps; ATS produced gradient on **5/5**.
+- Cross-base incidental: a parallel `SWE-World-4B-SFT` run (same ATS
+  config, different SFT base) produced step-1 and step-2 metrics within
+  **4% of `SWE-Master`**, including identical
+  `solve_partial / solve_none` counts. Suggests the ATS effect is
+  base-model invariant in this family.
+
 ## 8. Decisions / changes made during implementation
 
 Tracking the things that drifted from the §3 design once code met reality:
