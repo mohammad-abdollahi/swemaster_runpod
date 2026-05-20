@@ -707,14 +707,71 @@ replacement for the existing DeepSWE/SWE-Master binary reward.
 
 ## A. Appendix: reproducibility
 
-All code lives on branch `reward/active-test-selection` of the project repo
-(commits c1685a8 and parent). Single command to reproduce the smoke run:
+All code lives on branch `reward/active-test-selection` of the project
+repo (`mohammad-abdollahi/swemaster_runpod`).
+
+### A.1 One-command runs
 
 ```bash
+# Smoke (verify pipeline + first-step gradient; ~45 min single H200)
+bash run_scaled.sh                        # (see file for tunable env vars)
+
+# Binary baseline for headline comparison (same config, ATS off)
+bash run_baseline.sh
+
+# Smoke (smaller; ~30 min)
 TOTAL_TRAINING_STEPS=4 TRAIN_BATCH_SIZE=4 AGENT_MAX_STEPS=20 \
 MAX_RESPONSE=12288 EXPERIMENT_NAME=smoke \
   sg docker -c 'bash DeepSWE_RL/rllm/examples/swe/train_active_tests_swe_master_4b_h200.sh'
 ```
 
-All scheduler knobs are exposed as `RLLM_ACTIVE_TESTS_*` env vars and
-documented in `train_active_tests_swe_master_4b_h200.sh`.
+### A.2 Analysis utilities
+
+```bash
+# Per-PPO-step ATS terminal-reward summary
+python analyze_active_tests.py /home/temp/train_active_scaled.log
+
+# Counterfactual: what would the binary baseline have produced?
+python simulate_binary_baseline.py /home/temp/train_active_scaled.log
+
+# Per-step agent behavior summary (first-action mix, pytest usage, turns)
+python analyze_behavior_drift.py /home/temp/training_outputs/active_tests_swe_master
+
+# Reward + grad-norm + solve-rate plot
+python plot_learning.py /home/temp/train_active_scaled.log out.png
+```
+
+### A.3 Hyperparameter knobs
+
+All ATS knobs are environment variables, read at SWEEnv construction
+(`rllm/environments/swe/swe_arsenal.py:_scheduler_config_from_env`):
+
+| env var | default | role |
+|---|---|---|
+| `RLLM_ACTIVE_TESTS_ENABLED` | 0 | master switch |
+| `RLLM_ACTIVE_TESTS_MID_EPISODE` | 0 | v2 mid-episode pytest |
+| `RLLM_ACTIVE_TESTS_K` | 5 | k-step accounting window |
+| `RLLM_ACTIVE_TESTS_COOLDOWN` | 10 | masked-after-solve duration |
+| `RLLM_ACTIVE_TESTS_M_INIT` | 2 | initial active subset size |
+| `RLLM_ACTIVE_TESTS_M_MAX` | 6 | hard cap on |ACTIVE| |
+| `RLLM_ACTIVE_TESTS_EXPAND` | 2 | tests promoted on stall |
+| `RLLM_ACTIVE_TESTS_ALPHA` | 1.0 | dense per-solve reward |
+| `RLLM_ACTIVE_TESTS_BETA` | 0.2 | dense per-expand cost |
+| `RLLM_ACTIVE_TESTS_DELTA` | 0.5 | dense per-regression cost |
+| `RLLM_ACTIVE_TESTS_GAMMA` | 0.01 | dense per-step cost |
+| `RLLM_ACTIVE_TESTS_ETA` | 0.05 | 1/(n+1) shaping weight |
+| `RLLM_ACTIVE_TESTS_W_SOLVE` | 5.0 | terminal credit weight |
+| `RLLM_ACTIVE_TESTS_LAM_TOKEN` | 0.1 | terminal token penalty weight |
+| `RLLM_ACTIVE_TESTS_TOKEN_REF` | 32000 | token-penalty reference |
+| `RLLM_ACTIVE_TESTS_BLOCK_CHARS` | 4000 | prompt block size cap |
+
+### A.4 Verification
+
+13 pytest unit tests in
+`R2E-Gym/src/r2egym/agenthub/runtime/test_active_tests.py` pin the
+state-machine transitions (active→cooldown→retired, stall-expand,
+regression on cooldown re-check, etc.). Run from repo root:
+
+```bash
+python -m pytest R2E-Gym/src/r2egym/agenthub/runtime/test_active_tests.py -v
+```
