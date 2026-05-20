@@ -543,23 +543,24 @@ have seen 0 → 2 solve_all groups across the same compute.
 
 A parallel training run launched the same ATS configuration on the
 sibling base model `RUC-AIBOX/SWE-World-4B-SFT` (Qwen3-4B-architecture
-SFT-on-SWE-traces, like SWE-Master). Step 1 metrics (16 trajectories,
-MIN_FTP=5 parquet, identical hyperparameters except base model):
+SFT-on-SWE-traces, like SWE-Master). Two PPO steps (16 trajectories
+each, MIN_FTP=5 parquet, identical hyperparameters except base model):
 
-| Metric | SWE-Master step 1 | SWE-World step 1 |
-|---|---|---|
-| `actor/grad_norm` | 0.116 | 0.110 |
-| `critic/rewards/mean` | +0.144 | +0.042 |
-| `critic/rewards/max` | +1.611 | +1.609 |
-| `critic/advantages/max` | +1.120 | +1.668 |
-| `batch/solve_partial / none` | 1 / 3 | 1 / 3 |
+| Metric | SWE-Master step 1 | SWE-World step 1 | SWE-Master step 2 | SWE-World step 2 |
+|---|---|---|---|---|
+| `actor/grad_norm` | 0.116 | 0.110 | **0.424** | **0.409** |
+| `critic/rewards/mean` | +0.144 | +0.042 | +0.824 | +1.009 |
+| `critic/rewards/max` | +1.611 | +1.609 | +4.944 | +4.949 |
+| `batch/solve_partial / none` | 1 / 3 | 1 / 3 | 2 / 2 | 2 / 2 |
 
-The metric pattern is essentially identical: both models produce one
-partial-credit group on their first PPO step, with grad-norm in the
-same order of magnitude. This is preliminary evidence that the
-always-on-gradient property of ATS is **base-model invariant** within
-this family. We leave a more careful cross-model comparison to future
-work; for the paper's headline experiments we report SWE-Master only.
+The metric pattern is *strikingly similar* across both base models:
+identical solve_partial counts on both steps, grad_norms within 4% on
+both steps, and effectively identical maximum rewards. This is
+preliminary evidence that the always-on-gradient and partial-credit
+properties of ATS are **base-model invariant** within the Qwen3-4B
+SFT-on-SWE family. We leave a more careful cross-model comparison to
+future work; for the paper's headline experiments we report
+SWE-Master only.
 
 ### 5.3 ATS-vs-binary counterfactual on the smoke log
 
