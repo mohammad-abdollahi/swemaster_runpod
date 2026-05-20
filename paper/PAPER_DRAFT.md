@@ -133,15 +133,23 @@ SWE-agent RL or LM-RL more broadly.
 
 ### 2.2 Dense reward shaping in code-RL
 
-- **Process Reward Models** (Lightman 2023; Wang 2024). Closest in spirit:
-  dense per-step reward via a *learned* verifier. Two differences: (1)
-  ours requires no extra training data — the per-test pass map is read off
-  the same Docker verifier the terminal reward uses; (2) PRMs need
-  per-step labels which are hard to obtain for long agent trajectories,
-  whereas tests are a free, natural decomposition of "success".
-- **Self-rewarded code RL** (Endor, ICE, REFORM). Use the LM itself as a
-  judge of step quality. Higher variance and weakly grounded in the
+- **Process Reward Models** (Lightman 2023; Wang 2024). Closest in
+  spirit: dense per-step reward via a *learned* verifier. Two
+  differences: (1) ours requires no extra training data — the per-test
+  pass map is read off the same Docker verifier the terminal reward
+  uses; (2) PRMs need per-step labels which are hard to obtain for long
+  agent trajectories, whereas tests are a free, natural decomposition
+  of "success".
+- **Self-rewarded code RL** (Endor, ICE, REFORM). Use the LM itself as
+  a judge of step quality. Higher variance and weakly grounded in the
   external verifier; our reward is verifier-grounded by construction.
+- **Test-conditioned RL for code** (some closed-source efforts mentioned
+  in trade press). The closest published work we are aware of injects
+  a single failing test into the prompt. Our scheme (i) handles the
+  full set with a curriculum, (ii) closes the cooldown re-verification
+  loop, (iii) defends generalization via terminal full-set scoring,
+  and (iv) explicitly optimizes the token budget — none of which we
+  have seen combined elsewhere.
 
 ### 2.3 Curriculum learning
 
