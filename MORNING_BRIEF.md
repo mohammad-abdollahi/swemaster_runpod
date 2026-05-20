@@ -9,8 +9,8 @@ The Active-Test-Selection (ATS) reward you sketched is built, wired into
 the DeepSWE/SWE-Master pipeline, unit-tested (13 green), and demonstrably
 producing real PPO gradient on the SWE-Master-4B-SFT base.
 
-**Headline number** from a 3-PPO-step smoke (4 train tasks × 4 LOOP
-rollouts = 16 trajectories per step, AGENT_MAX_STEPS=20):
+**Headline numbers — smoke** (3 PPO steps, 16 trajectories/step,
+AGENT_MAX_STEPS=20):
 
 | step | observed solves | `actor/grad_norm` |
 |---|---|---|
@@ -18,10 +18,19 @@ rollouts = 16 trajectories per step, AGENT_MAX_STEPS=20):
 | 2 | 2 | **0.306** |
 | 3 | 1 | **0.165** |
 
-For comparison, the binary baseline reward would have given grad_norm
-= 0 on **all 4** unique-task groups in step 1 (all-fail → all-zero
-reward → `(rewards == 0).all()` filter triggers), and 2 of 4 in step 2.
-ATS gives signal on 100% of those.
+**Headline numbers — scaled** (MIN_FTP=5 parquet, AGENT_MAX_STEPS=50,
+w_solve=10, lr=3e-6; aborted at step 3 startup due to a process-mgmt
+glitch but steps 1-2 captured cleanly; scaled-2 relaunch in progress):
+
+| step | observed full solves | observed partials | `actor/grad_norm` | reward mean | reward max |
+|---|---|---|---|---|---|
+| 1 | 0 | 2 (frac=0.333) | 0.116 | +0.144 | +1.611 |
+| 2 | 2 | 1 (frac=0.857) | **0.424** | **+0.824** | **+4.944** |
+
+For binary baseline comparison: scaled step 1 would have given std=0.000
+(every trajectory mapped to reward 0 → no gradient at all). ATS std =
+1.107 → real gradient. This is the cleanest demonstration in our data
+of why the continuous reward matters.
 
 ## Where it lives
 
