@@ -372,9 +372,28 @@ policy began emitting shorter responses (consistent with the
 token-penalty term pushing in that direction). It is too early to call
 this convergent behavior — n=16 — but the direction is encouraging.
 
-### 5.2 Larger run (once smoke is green)
+### 5.2 Scaled run (overnight, 8 PPO steps)
 
-- 64+ train tasks, 5 epochs (paper-faithful), comparison vs binary baseline.
+After the smoke established the reward path and confirmed first-update
+gradient signal, we queue a scaled run with:
+- `AGENT_MAX_STEPS=50` (vs 20 smoke; more chances for actual solves)
+- `RLLM_ACTIVE_TESTS_W_SOLVE=10.0` (vs 5.0 smoke; bigger reward jump per solve)
+- `LR=3e-6` (vs 1e-6 smoke)
+- `TOTAL_TRAINING_STEPS=8`, `MAX_RESPONSE=16384`
+
+Expected wallclock ≈ 5 hours on a single H200 with concurrency 4. The
+goal is to demonstrate trajectory-reward **trend** across 8 PPO steps,
+not just first-update signal.
+
+### 5.3 Planned: ATS-vs-binary head-to-head (TODO)
+
+Identical optimizer/data/config, only `RLLM_ACTIVE_TESTS_ENABLED` flips
+between 1 and 0. The headline-result table for the paper:
+
+| Run | grad-norm mean | non-zero-grad-step ratio | first solve seen at step | wall-clock per step |
+|---|---|---|---|---|
+| binary baseline | TBD | TBD | TBD | TBD |
+| ATS v1 | TBD | TBD | TBD | TBD |
 
 ### 5.3 Ablations
 
