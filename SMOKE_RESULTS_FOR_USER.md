@@ -63,6 +63,19 @@ real gradient update in one cycle. The two solves we saw in step 2 (both
 on a 1-FTP task) created the variance that ATS's continuous reward
 amplifies into LOOP advantage.
 
+**Counterfactual against binary baseline** (from `simulate_binary_baseline.py`,
+which simulates `r_bin = 1 if frac_solved >= 1 else 0` for the SAME
+trajectories):
+
+| step | ATS reward std (across 16 traj) | binary baseline std | binary groups with all-zero reward | binary contributes gradient? |
+|---|---|---|---|---|
+| 1 | 0.014 | 0.000 | **4/4** | **NO** |
+| 2 | 1.658 | 0.331 | 2/4 | yes (partial) |
+| 3 | 1.214 | 0.247 | 3/4 | yes (partial) |
+
+ATS produces non-zero reward std on 3 of 3 PPO steps. Binary baseline
+would have produced gradient on 2 of 3 (waste of step 1).
+
 ## What's running
 
 **Scaled run is live** (launched 2026-05-20 05:36 UTC), experiment
