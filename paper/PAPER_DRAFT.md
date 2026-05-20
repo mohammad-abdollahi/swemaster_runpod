@@ -341,6 +341,34 @@ Three observations from this smoke:
    the agent off mid-investigation in most cases. The follow-on
    experiment (§5.2) uses `AGENT_MAX_STEPS=50`.
 
+**Step-by-step PPO metrics across the smoke (steps 1-3 of 4):**
+
+| Metric | Step 1 | Step 2 | Step 3 |
+|---|---|---|---|
+| `critic/rewards/mean` | −0.055 | +0.269 | +0.105 |
+| `critic/rewards/max` | −0.043 | +2.468 | +2.456 |
+| `critic/advantages/max / min` | +0.010 / −0.014 | +1.679 / −1.673 | +2.501 / −0.843 |
+| `actor/grad_norm` | **0.001** | **0.306** | **0.165** |
+| `actor/pg_loss` | ≈ 0 | −0.022 | −0.002 |
+| `actor/entropy_loss` | 0.254 | 0.280 | 0.244 |
+| `batch/solve_none / partial / all` | 4 / 0 / 0 | 3 / 1 / 0 | 3 / 1 / 0 |
+| `response_length/clip_ratio` | 0.938 | 0.812 | 1.000 |
+| solves observed (frac_solved=1.0) | 0 | 2 | 1 |
+| `timing_s/step` | 624 | 637 | 513 |
+
+The relationship between observed solves and gradient magnitude is
+direct: 0 solves → 0.001 grad-norm, 2 solves → 0.306, 1 solve → 0.165.
+Entropy stays in [0.24, 0.28] — uncollapsed.
+
+A subtler observation: step 3's mean reward is *lower* than step 2's,
+despite the policy having received PPO updates from both prior steps.
+This is expected at smoke scale: each PPO update is small (lr=1e-6,
+grad-norm bounded), and the per-step solve rate is dominated by which
+*tasks* the batch sampled, not by accumulated policy improvement. The
+follow-on scaled run (§5.2) uses a richer parquet (`MIN_FTP=5`, mean
+`|F|=11.4`) and 5× more PPO steps to separate signal from task-sampling
+noise.
+
 **Step-1 → step-2 trajectory reward distribution shift (full step 2 = 16
 trajectories, 2 solves on a single task):**
 
