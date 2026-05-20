@@ -779,6 +779,25 @@ scales with informative reward variance.
   any SWE-bench parquet, so the held-out distribution is at least
   unseen during RL.
 
+## 7.6 Broader impact
+
+ATS is a methodological refinement to an existing SWE-agent RL pipeline.
+The same societal considerations apply as to SWE-Master / DeepSWE more
+broadly: agents trained this way produce patches that can be applied
+to real codebases without human review, which raises (i) supply-chain
+risk if used on critical infrastructure, (ii) correctness risk if the
+test suite is not comprehensive, and (iii) labor displacement
+considerations in software engineering. ATS does not change the agent's
+capability ceiling — it only improves training-time sample efficiency.
+We do not see novel ethical considerations from this work above what
+the underlying recipe already raises.
+
+A specific consideration to flag: the v2 mid-episode pytest path runs
+arbitrary repository test code mid-trajectory in a sandboxed Docker
+container. Repository tests can contain network calls, file-system
+operations, etc. — the same risk profile as the terminal `/run_tests.sh`
+that the binary baseline already runs.
+
 ## 9. Conclusion
 
 We presented Active-Test-Selection (ATS) rewards for SWE-agent RL: a
