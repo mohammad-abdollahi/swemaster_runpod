@@ -348,16 +348,63 @@ Three observations from this smoke:
 
 ## 6. Discussion
 
-(Stubs.)
+### 6.1 The "always-on gradient" property and its mechanism
 
-- **Why exposing tests doesn't cause overfitting**: the terminal reward
-  scores against the full set, and stall-expand draws from hidden tests, so
-  a policy that learns to satisfy only the visible block sees its training
-  reward erode immediately.
-- **Cost analysis**: each scheduler tick in v2 costs ≈1 full `/run_tests.sh`
-  invocation (3-5 min in Docker). With k_steps=5 over 150-step episodes
-  this is a >20× multiplier on rollout cost. The v1 variant pays nothing
-  beyond a single terminal evaluation — the same as the binary baseline.
+A surprising practical advantage of ATS is that it always gives PPO
+*some* gradient, even on rollout groups where no test passes. With the
+binary recipe, every group `(uid_rewards == 0).all()` contributes zero
+advantage and is, in the current verl/rllm code path, either filtered
+out under `rejection_sample` or contributes a literally zero update.
+
+With ATS, even an all-fail group has `r_token` variance across rollouts
+(different trajectories use different numbers of tokens). The group
+variance is small — on the order of a few percent of `r_solve` —
+but non-zero, so LOOP advantages are non-zero and the gradient is
+non-vanishing. We measured `actor/grad_norm = 0.001` on a 16-trajectory
+all-fail step where the binary baseline would have contributed zero.
+
+This effect is independent of whether the agent improves at solving
+tests; it manifests purely from the *reward structure*, not from
+trajectory diversity. We believe this is a methodologically interesting
+property of dense-but-bounded rewards in the GRPO/LOOP family.
+
+### 6.2 Why exposing tests doesn't cause over-fitting
+
+The terminal reward scores against the *full* `FAIL_TO_PASS`, not just
+the active subset. A policy that learns to satisfy only the visible
+tests gets the same `r_solve` as one that satisfies the same number of
+hidden tests — and the curriculum's stall-expand mechanism mixes hidden
+tests into the visible set as soon as the agent gets stuck on the
+visible ones. So a generalization-gap penalty is automatically baked in
+to the training signal.
+
+### 6.3 Cost analysis
+
+Per-rollout costs, measured on the smoke (single H200, openhands
+scaffold, max_steps=20):
+
+| Subroutine | Time / traj |
+|---|---|
+| LLM gen | ~26 s (avg) |
+| In-container bash exec | ~180 s |
+| Terminal `/run_tests.sh` | ~5 s |
+| Total | ~210 s (3.5 min) |
+
+The terminal reward is 2-3% of trajectory time; in v1 ATS pays nothing
+beyond what the binary baseline already pays. The v2 mid-episode pytest
+path multiplies the rollout cost by `1 + (max_steps/k_steps) × (5/total_time)`,
+which for our settings is ~`1 + (150/5) × (5/210) ≈ 1.7×`. Not free,
+but tractable for ablations.
+
+### 6.4 Limitations of small FAIL_TO_PASS
+
+The SWE-rebench pool we use is skewed: 18/32 tasks have `|F|=1`,
+7/32 have `|F|=2`, only 7/32 have `|F| ≥ 3` (max 37). With `|F|=1` the
+partial-credit signal degenerates to binary in spirit (the only
+non-binary terms are `r_token` and the optional `eta/(n+1)`). A
+follow-on dataset with `|F| ≥ 5` filter (see
+`MIN_FTP=5 build_comprehensive_swerebench.py`) is planned to exercise
+the full continuous-reward regime.
 
 ## 7. Limitations and future work
 
