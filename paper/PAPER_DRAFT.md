@@ -490,6 +490,28 @@ group; gradient would have been zero. ATS produces non-zero gradient on
 the same trajectories thanks to the partial-credit and token-penalty
 terms.
 
+**Scaled step-2 metrics — one PPO update later:**
+
+| Metric | Step 1 | Step 2 | Δ |
+|---|---|---|---|
+| `critic/rewards/mean` | +0.144 | **+0.824** | × 5.7 |
+| `critic/rewards/max` | +1.611 | **+4.944** | (one trajectory full-solved its 6-FTP task; reward halved by MAX_STEPS gating) |
+| `critic/advantages/max` | +1.120 | **+4.289** | × 3.8 |
+| `critic/advantages/min` | −1.123 | **−3.343** | × 3 |
+| `actor/grad_norm` | 0.116 | **0.424** | × 3.6 |
+| `actor/pg_loss` | −0.024 | −0.029 | small change |
+| `actor/entropy_loss` | 0.218 | 0.205 | declining (policy concentrating) |
+| `batch/solve_partial / none` | 1 / 3 | **2 / 2** | doubled |
+| Observed full solves (frac=1.0) | 0 | **2** (both on a 6-FTP task) |
+| Observed partial solves (0<frac<1) | 2 | 1 (frac=0.857 on a 7-FTP task) |
+
+This is the headline learning result of the scaled run: **after one PPO
+update the policy doubled its rate of partial-credit groups (1→2 of 4)
+and produced two full solves**, on a 6-FTP task — the same task type
+that produced partial credit in step 1, suggesting actual within-task
+learning rather than just task-sampling luck. Binary baseline would
+have seen 0 → 2 solve_all groups across the same compute.
+
 ### 5.3 ATS-vs-binary counterfactual on the smoke log
 
 `simulate_binary_baseline.py` (in repo root) reads the per-trajectory
