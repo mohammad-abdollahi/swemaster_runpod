@@ -204,6 +204,30 @@ ACTIVE — to prevent over-fitting to the visible subset.
 A bounded `<active_tests>` block (default ≤4 KB, ≤6 test IDs) is appended
 to the issue description. Just test identifiers in v1; bodies optional.
 
+### 3.4 Interaction with verl/rllm's group-variance filtering
+
+The verl/rllm PPO trainer ([agent_ppo_trainer_pipeline.py:188-209](
+DeepSWE_RL/rllm/rllm/trainer/verl/agent_ppo_trainer_pipeline.py#L188-L209))
+implements a variance filter: groups with `(uid_rewards == 0).all()` or
+`(uid_rewards == 1).all()` are excluded from the PPO update via
+`valid_mask`. This is necessary because LOOP/GRPO advantage in a constant
+group is zero (or normalizes to NaN), wasting compute on uninformative
+updates.
+
+The filter is keyed on equality to 0 and 1, which is fine for binary
+rewards but **prevents the binary recipe from ever getting gradient on the
+hardest tasks** — where every rollout fails — and on the easiest, where
+every rollout succeeds. Our own observations from a 32-task SWE-rebench
+training run with the binary recipe (`/home/temp/train_h200_5epoch.log`)
+show this filter triggering on ≈40% of PPO steps.
+
+Continuous ATS rewards are never exactly 0 or 1 — even an all-zero
+`frac_solved` group differs in `r_token` per trajectory. The filter
+therefore *naturally* keeps every group, and the GRPO/LOOP within-group
+variance — small but non-zero — produces non-trivial advantage. We
+believe this is a key, under-appreciated benefit of continuous rewards in
+the current verl/rllm code path.
+
 ### 3.4 Two operating modes
 
 - **v1 / paper headline**: scheduler manages the initial ACTIVE subset and
