@@ -93,9 +93,9 @@ TEST_FREQ=${TEST_FREQ:-10}
 # total_epochs × steps_per_epoch). For smoke: TOTAL_TRAINING_STEPS=4
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-}
 
-PROJECT_NAME=${PROJECT_NAME:-active_tests_swe_world}
+PROJECT_NAME=${PROJECT_NAME:-active_tests_swe_master}
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-h200_swe_world_${TS}}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-h200_swe_master_${TS}}
 
 DEFAULT_LOCAL_DIR="/home/temp/training_outputs/${PROJECT_NAME}/${EXPERIMENT_NAME}"
 ROLLOUT_DATA_DIR="/home/temp/training_outputs_rollout/${PROJECT_NAME}/${EXPERIMENT_NAME}"
