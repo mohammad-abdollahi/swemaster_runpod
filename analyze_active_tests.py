@@ -26,7 +26,15 @@ from pathlib import Path
 LOG = Path(sys.argv[1] if len(sys.argv) > 1 else "/home/temp/train_active_smoke.log")
 
 STEP_MARK = re.compile(r"now in fit_agent, batch, epoch (\d+), step (\d+)")
-DOCKER_RE = re.compile(r"swerebench/sweb\.eval\.x86_64\.([A-Za-z0-9_.-]+?)(?::latest)?\b")
+# The default regex needs to be GREEDY past `-` (which is treated as a word
+# character by some shells but Python's re uses ASCII word boundaries). The
+# old non-greedy version matched at the first `-` (e.g., `acorg_1776_dark`
+# instead of `acorg_1776_dark-matter-680`). Match a full instance-id by
+# allowing alphanumerics, underscores, dots, and hyphens up to `:latest` or
+# the next whitespace.
+DOCKER_RE = re.compile(
+    r"swerebench/sweb\.eval\.x86_64\.([A-Za-z0-9_.\-]+?)(?::latest|\s|$)"
+)
 ATS_RE = re.compile(
     r"ActiveTests terminal: "
     r"frac_solved=(?P<frac>[-0-9.eE]+) "
@@ -126,16 +134,17 @@ def main() -> int:
         print(f"  steps with nonzero variance: {nonzero}/{len(variances)}  "
               f"({100*nonzero/len(variances):.1f}%)")
 
-    # Per-task drift across epochs.
-    by_task = defaultdict(list)
-    for e in events:
-        if e["task"]:
-            by_task[e["task"]].append(e)
-    print("\n## Top-10 tasks by trajectory count")
-    sorted_tasks = sorted(by_task.items(), key=lambda kv: -len(kv[1]))[:10]
-    for task, rs in sorted_tasks:
-        fracs = [r["frac_solved"] for r in rs]
-        print(f"  {task:<55s} n={len(rs):>3}  frac_mean={st.mean(fracs):.3f}  retired_max={max(r['retired'] for r in rs)}")
+    # Note: per-task attribution is approximate. The log interleaves N
+    # parallel rollouts' docker setup messages, so a single docker-image
+    # line can be the "most recent" before any of those rollouts' terminal
+    # ATS event. We log the aggregate and the *number of solves per step*
+    # rather than attributing solves to specific tasks.
+    print("\n## Solves per PPO step (frac_solved > 0)")
+    print(f"  {'epoch':>5} {'step':>4} {'solves':>6} {'n':>3} {'best_frac':>9}")
+    for (ep, st_), rs in sorted(by_step.items(), key=lambda kv: (kv[0][0] or -1, kv[0][1] or -1)):
+        solves = [r["frac_solved"] for r in rs if r["frac_solved"] > 0]
+        best = max((r["frac_solved"] for r in rs), default=0.0)
+        print(f"  {str(ep):>5} {str(st_):>4} {len(solves):>6} {len(rs):>3} {best:>9.3f}")
 
     return 0
 
