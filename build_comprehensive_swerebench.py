@@ -25,8 +25,18 @@ OUT = os.environ.get(
 )
 os.makedirs(OUT, exist_ok=True)
 
+# CACHED_ONLY=1 → select only tasks whose image is ALREADY pulled locally
+# (uses `docker image inspect`, a local call). This guarantees zero Docker Hub
+# pulls at training time → no rate-limit NO_CONTAINER failures. Default 0
+# keeps the remote `docker manifest inspect` existence check.
+CACHED_ONLY = os.environ.get("CACHED_ONLY", "0").strip().lower() in ("1", "true", "yes")
+
 def image_exists(img):
-    # cheap existence check, no full pull
+    if CACHED_ONLY:
+        # local-only check: image must already be in the docker image store
+        return subprocess.run(["docker", "image", "inspect", img],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    # cheap remote existence check, no full pull
     return subprocess.run(["docker", "manifest", "inspect", img],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
