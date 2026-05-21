@@ -52,8 +52,13 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
 
     Letting the trainer pass these through env keeps the runtime independent
     of the verl/hydra config schema — easier to iterate during paper experiments.
+
+    The P2P (PASS_TO_PASS) defaults follow the 2026-05-20 user decision:
+    w_regress = w_solve / 2 (lighter than F2P credit so that a successful
+    fix that breaks 1 regression test still scores net-positive).
     """
     assert SchedulerConfig is not None
+    w_solve = _env_float("RLLM_ACTIVE_TESTS_W_SOLVE", 5.0)
     return SchedulerConfig(
         k_steps=_env_int("RLLM_ACTIVE_TESTS_K", 5),
         cooldown_steps=_env_int("RLLM_ACTIVE_TESTS_COOLDOWN", 10),
@@ -65,7 +70,11 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         delta=_env_float("RLLM_ACTIVE_TESTS_DELTA", 0.5),
         gamma=_env_float("RLLM_ACTIVE_TESTS_GAMMA", 0.01),
         eta=_env_float("RLLM_ACTIVE_TESTS_ETA", 0.05),
-        w_solve=_env_float("RLLM_ACTIVE_TESTS_W_SOLVE", 5.0),
+        w_solve=w_solve,
+        # P2P knobs — default w_regress = w_solve / 2.
+        w_regress=_env_float("RLLM_ACTIVE_TESTS_W_REGRESS", w_solve / 2.0),
+        delta_p2p_break=_env_float("RLLM_ACTIVE_TESTS_DELTA_P2P_BREAK", 0.5),
+        delta_p2p_recover=_env_float("RLLM_ACTIVE_TESTS_DELTA_P2P_RECOVER", 0.25),
         lam_token=_env_float("RLLM_ACTIVE_TESTS_LAM_TOKEN", 0.1),
         token_ref=_env_float("RLLM_ACTIVE_TESTS_TOKEN_REF", 32000.0),
         max_block_chars=_env_int("RLLM_ACTIVE_TESTS_BLOCK_CHARS", 4000),
@@ -245,13 +254,19 @@ class SWEEnv(BaseEnv):
                 fail_to_pass = self.env.runtime.get_fail_to_pass_ids()
             except Exception:
                 fail_to_pass = []
+            try:
+                pass_to_pass = self.env.runtime.get_pass_to_pass_ids()
+            except Exception:
+                pass_to_pass = []
             if fail_to_pass:
                 self.scheduler_config = _scheduler_config_from_env()
                 self.scheduler = ActiveTestScheduler(
                     fail_to_pass=fail_to_pass,
+                    pass_to_pass=pass_to_pass,
                     config=self.scheduler_config,
                 )
                 block = self.scheduler.prompt_block()
+                n_p2p = len(pass_to_pass)
                 instruction = (
                     f"{instruction}\n\n"
                     f"# Tests selected for this episode\n"
@@ -259,14 +274,21 @@ class SWEEnv(BaseEnv):
                     f"is to make them pass; additional hidden tests may be "
                     f"revealed if you stall. You can run them yourself via the "
                     f"bash tool.\n{block}\n"
+                    f"There are {n_p2p} additional regression-guard "
+                    f"(PASS_TO_PASS) tests that are currently passing. Your "
+                    f"final patch MUST NOT break them.\n"
                 )
                 info["active_tests"] = list(self.scheduler.active.keys())
                 info["active_tests_total"] = self.scheduler.n_total()
+                info["p2p_total"] = n_p2p
                 print(
                     f"!!!!!!!!!!!!!!!!!ActiveTests: scheduler ready, "
                     f"n_total={self.scheduler.n_total()} "
+                    f"n_p2p={n_p2p} "
                     f"m_init={self.scheduler.config.m_init} "
-                    f"k_steps={self.scheduler.config.k_steps}"
+                    f"k_steps={self.scheduler.config.k_steps} "
+                    f"w_solve={self.scheduler.config.w_solve} "
+                    f"w_regress={self.scheduler.config.w_regress}"
                 )
             else:
                 self.scheduler = None
@@ -281,30 +303,37 @@ class SWEEnv(BaseEnv):
         With active-tests off: identical to the legacy `env.compute_reward()`
         (binary `int(success)`).
 
-        With active-tests on: run `/run_tests.sh` once, compute the per-test
-        pass map, and return `scheduler.terminal_reward(...)` plus the sum of
-        any dense per-tick rewards that accrued during the episode.
+        With active-tests on: run `/run_tests.sh` once (covers BOTH F2P and
+        P2P), compute the per-test pass maps, and return
+        `scheduler.terminal_reward(...)` (which includes the F2P solve credit
+        and the P2P regression penalty) plus the sum of any dense per-tick
+        rewards accumulated during the episode.
         """
         if not self.scheduler:
             return self.env.compute_reward()
         try:
-            pass_map = self.env.runtime.get_fail_to_pass_status(
+            f2p_map, p2p_map = self.env.runtime.get_f2p_and_p2p_status(
                 timeout=self.reward_timeout
             )
         except Exception as e:
-            print(f"!!!!!!! get_fail_to_pass_status failed in compute_final_reward: {e!r}")
-            pass_map = {}
+            print(f"!!!!!!! get_f2p_and_p2p_status failed in compute_final_reward: {e!r}")
+            f2p_map, p2p_map = {}, {}
         r_final, breakdown = self.scheduler.terminal_reward(
-            full_pass_map=pass_map if pass_map else None,
+            full_pass_map=f2p_map if f2p_map else None,
+            p2p_pass_map=p2p_map if p2p_map else None,
             tokens_used=self.tokens_used_approx,
         )
         dense_sum = float(sum(e.reward for e in self.scheduler_events))
         total = r_final + dense_sum
         print(
-            f"!!!!!!! ActiveTests terminal: frac_solved={breakdown.get('frac_solved'):.3f} "
-            f"r_solve={breakdown.get('r_solve'):.3f} r_token={breakdown.get('r_token'):.3f} "
+            f"!!!!!!! ATS terminal: frac_solved={breakdown.get('frac_solved'):.3f} "
+            f"r_solve={breakdown.get('r_solve'):.3f} "
+            f"frac_p2p_broken={breakdown.get('frac_p2p_broken'):.3f} "
+            f"r_regress={breakdown.get('r_regress'):.3f} "
+            f"r_token={breakdown.get('r_token'):.3f} "
             f"dense_sum={dense_sum:.3f} total={total:.3f} "
             f"retired={len(self.scheduler.retired)}/{self.scheduler.n_total()} "
+            f"p2p_broken={int(breakdown.get('n_p2p_broken', 0))}/{int(breakdown.get('n_p2p', 0))} "
             f"ticks={self.scheduler.total_ticks}"
         )
         return total
@@ -336,6 +365,8 @@ class SWEEnv(BaseEnv):
         # Optional mid-episode pytest tick (env-var gated; OFF by default).
         # When on, runs /run_tests.sh every k_steps and drives the full state
         # machine, attaching a compact summary block to the observation.
+        # Per user-confirmed setting, mid-episode P2P checking runs ALL P2P
+        # tests every k_steps (cost: ~1 full pytest run per tick).
         if (
             self.scheduler is not None
             and self.active_tests_mid_episode
@@ -344,18 +375,23 @@ class SWEEnv(BaseEnv):
             and (self.total_steps % self.scheduler.config.k_steps) == 0
         ):
             try:
-                pass_map = self.env.runtime.get_fail_to_pass_status(
+                f2p_map, p2p_map = self.env.runtime.get_f2p_and_p2p_status(
                     timeout=self.reward_timeout
                 )
             except Exception as e:
-                print(f"!!!!!!! mid-episode get_fail_to_pass_status failed: {e!r}")
-                pass_map = {}
-            evt = self.scheduler.tick(pass_map)
+                print(f"!!!!!!! mid-episode get_f2p_and_p2p_status failed: {e!r}")
+                f2p_map, p2p_map = {}, {}
+            evt = self.scheduler.tick(
+                f2p_map, p2p_pass_map=p2p_map if p2p_map else None
+            )
             self.scheduler_events.append(evt)
             block = self.scheduler.prompt_block()
             tick_msg = (
                 f"\n[active_tests update] solves={evt.solves} "
                 f"regressions={evt.regressions} expansions={evt.expansions} "
+                f"p2p_broken_now={evt.n_p2p_broken}/{evt.n_p2p_total} "
+                f"(newly_broken={evt.p2p_newly_broken}, "
+                f"newly_recovered={evt.p2p_newly_recovered})\n"
                 f"n_active={evt.n_active} n_retired={evt.n_retired}\n{block}"
             )
             obs_str = obs_str + tick_msg
@@ -367,6 +403,10 @@ class SWEEnv(BaseEnv):
                 "solves": evt.solves,
                 "expansions": evt.expansions,
                 "regressions": evt.regressions,
+                "p2p_newly_broken": evt.p2p_newly_broken,
+                "p2p_newly_recovered": evt.p2p_newly_recovered,
+                "n_p2p_broken": evt.n_p2p_broken,
+                "n_p2p_total": evt.n_p2p_total,
                 "n_active": evt.n_active,
                 "n_retired": evt.n_retired,
             }

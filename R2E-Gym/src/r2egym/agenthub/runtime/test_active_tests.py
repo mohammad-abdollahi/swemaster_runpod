@@ -193,6 +193,122 @@ def test_full_episode_end_to_end_small():
     )
 
 
+# ----------------------------------------------------------------------
+# PASS_TO_PASS (regression-guard) tests
+# ----------------------------------------------------------------------
+
+
+def test_p2p_initial_state_all_trusted():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0"], pass_to_pass=["p0", "p1", "p2"],
+        config=SchedulerConfig(),
+    )
+    assert all(s.p2p_status.values()), "all P2P should start trusted (passing)"
+    assert s.total_p2p_breaks == 0
+    assert s.total_p2p_recovers == 0
+
+
+def test_p2p_tick_with_no_p2p_map_does_not_change_state():
+    s = _make(["f0"], m_init=1, gamma=0.0, eta=0.0)
+    s.pass_to_pass = ["p0", "p1"]
+    s.__post_init__()  # rebuild with the new pass_to_pass
+    snap_before = dict(s.p2p_status)
+    evt = s.tick({"f0": False})  # no p2p_pass_map
+    assert s.p2p_status == snap_before
+    assert evt.p2p_newly_broken == 0
+    assert evt.p2p_newly_recovered == 0
+    assert evt.r_p2p_break == 0.0
+    assert evt.r_p2p_recover == 0.0
+
+
+def test_p2p_break_applies_dense_penalty():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0"], pass_to_pass=["p0", "p1"],
+        config=SchedulerConfig(
+            m_init=1, gamma=0.0, eta=0.0, delta_p2p_break=0.5, delta_p2p_recover=0.25
+        ),
+    )
+    evt = s.tick({"f0": False}, p2p_pass_map={"p0": False, "p1": True})
+    assert evt.p2p_newly_broken == 1
+    assert evt.p2p_newly_recovered == 0
+    assert evt.r_p2p_break == pytest.approx(-0.5)
+    assert evt.n_p2p_broken == 1
+    assert s.p2p_status == {"p0": False, "p1": True}
+
+
+def test_p2p_recover_applies_dense_bonus():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0"], pass_to_pass=["p0"],
+        config=SchedulerConfig(
+            m_init=1, gamma=0.0, eta=0.0, delta_p2p_break=0.5, delta_p2p_recover=0.25
+        ),
+    )
+    # Break, then recover.
+    e1 = s.tick({"f0": False}, p2p_pass_map={"p0": False})
+    assert e1.p2p_newly_broken == 1
+    assert s.p2p_status == {"p0": False}
+    e2 = s.tick({"f0": False}, p2p_pass_map={"p0": True})
+    assert e2.p2p_newly_recovered == 1
+    assert e2.r_p2p_recover == pytest.approx(0.25)
+    assert s.p2p_status == {"p0": True}
+
+
+def test_terminal_reward_with_p2p_break_subtracts_w_regress():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0", "f1"], pass_to_pass=["p0", "p1", "p2", "p3"],
+        config=SchedulerConfig(w_solve=10.0, w_regress=5.0, lam_token=0.0),
+    )
+    r, br = s.terminal_reward(
+        full_pass_map={"f0": True, "f1": True},
+        p2p_pass_map={"p0": True, "p1": False, "p2": False, "p3": True},
+        tokens_used=0,
+    )
+    assert br["frac_solved"] == pytest.approx(1.0)
+    assert br["r_solve"] == pytest.approx(10.0)
+    assert br["frac_p2p_broken"] == pytest.approx(0.5)  # 2 of 4 broken
+    assert br["r_regress"] == pytest.approx(-2.5)
+    assert r == pytest.approx(10.0 - 2.5)
+
+
+def test_terminal_reward_no_p2p_map_falls_back_to_internal_state():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0"], pass_to_pass=["p0", "p1"],
+        config=SchedulerConfig(w_solve=10.0, w_regress=5.0, lam_token=0.0),
+    )
+    s.tick({"f0": False}, p2p_pass_map={"p0": False, "p1": True})  # break p0
+    r, br = s.terminal_reward(full_pass_map={"f0": False}, tokens_used=0)
+    assert br["frac_p2p_broken"] == pytest.approx(0.5)
+    assert br["r_regress"] == pytest.approx(-2.5)
+
+
+def test_terminal_reward_no_p2p_at_all_is_unaffected():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0", "f1"], pass_to_pass=[],
+        config=SchedulerConfig(w_solve=10.0, w_regress=5.0, lam_token=0.0),
+    )
+    r, br = s.terminal_reward(
+        full_pass_map={"f0": True, "f1": True}, tokens_used=0,
+    )
+    assert br["frac_p2p_broken"] == 0.0
+    assert br["r_regress"] == 0.0
+    assert r == pytest.approx(10.0)
+
+
+def test_p2p_total_counters_accumulate_across_ticks():
+    s = ActiveTestScheduler(
+        fail_to_pass=["f0"], pass_to_pass=["p0", "p1"],
+        config=SchedulerConfig(m_init=1, gamma=0.0, eta=0.0),
+    )
+    s.tick({"f0": False}, p2p_pass_map={"p0": False, "p1": True})
+    s.tick({"f0": False}, p2p_pass_map={"p0": False, "p1": False})
+    s.tick({"f0": False}, p2p_pass_map={"p0": True, "p1": True})
+    # tick1: p0 broken (1 break)
+    # tick2: p1 broken (1 break)
+    # tick3: p0+p1 recovered (2 recovers)
+    assert s.total_p2p_breaks == 2
+    assert s.total_p2p_recovers == 2
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

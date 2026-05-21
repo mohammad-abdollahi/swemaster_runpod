@@ -248,6 +248,42 @@ r_final = w_solve · |solved|/|F| − lam_token · tokens/T_ref
 with solved set computed against the *full* FAIL_TO_PASS — never just
 ACTIVE — to prevent over-fitting to the visible subset.
 
+### 3.2bis PASS_TO_PASS regression handling
+
+Each SWE-bench-style training instance ships not just a `FAIL_TO_PASS`
+set `F` but a `PASS_TO_PASS` set `P` of regression-guard tests that
+must remain passing under the agent's patch. A patch that resolves `F`
+while breaking any of `P` does NOT pass SWE-bench evaluation. v1.0 of
+ATS ignored `P` entirely (a real bug; see the changelog at the end of
+the design doc).
+
+v1.1 (the version this paper reports) tracks `P` as a per-test boolean
+state: `True` = trusted (presumed passing), `False` = broken. Initial
+state: all trusted (the unmodified repo passes `P` by definition).
+
+Terminal reward gains a regression term:
+
+```
+r_regress = -w_regress · |P_broken| / |P|
+```
+
+with `w_regress = w_solve / 2` by default — i.e., a fix that solves all
+`F` but breaks one of, say, 20 P2P tests still scores
+`+w_solve − w_regress/20 ≈ +0.975 · w_solve` (net positive, but
+breaking many regression tests quickly erodes the credit). A hard-veto
+variant (`w_regress = w_solve`) is one env-var away.
+
+When the v2 mid-episode pytest path is enabled, the scheduler also
+emits dense per-tick reward components for state changes:
+
+```
+r_p2p_break   = -δ_break  · #newly_broken     (default δ=0.5)
+r_p2p_recover = +δ_recover · #newly_recovered (default 0.25)
+```
+
+This encourages the policy to actively *check* its edits against `P` and
+to *recover* from regressions when it notices them.
+
 ### 3.3 Prompt injection
 
 A bounded `<active_tests>` block (default ≤4 KB, ≤6 test IDs) is appended

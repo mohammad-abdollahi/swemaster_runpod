@@ -1647,6 +1647,51 @@ class DockerRuntime(ExecutionEnvironment):
             self.logger.info(f"get_fail_to_pass_status error: {repr(e)}")
             return {}
 
+    def get_pass_to_pass_ids(self) -> List[str]:
+        """Return the PASS_TO_PASS list (regression-guard tests) for the task.
+
+        Used by the active-test-selection scheduler to penalize regressions:
+        these tests should remain passing through the agent's edits.
+        """
+        if self.swebench_verified or self.swerebench or self.swegym:
+            try:
+                return list(self.test_spec.PASS_TO_PASS or [])
+            except Exception:
+                return []
+        if self.swesmith:
+            return list(self.ds.get("PASS_TO_PASS", []) or [])
+        return []
+
+    def get_f2p_and_p2p_status(self, timeout: int = 300) -> Tuple[Dict[str, bool], Dict[str, bool]]:
+        """Run /run_tests.sh ONCE and return (fail_to_pass_pass_map, pass_to_pass_pass_map).
+
+        More efficient than calling get_fail_to_pass_status() + a separate P2P
+        query, since the full test run already covers both lists.
+        """
+        try:
+            f2p_ids = self.get_fail_to_pass_ids()
+            p2p_ids = self.get_pass_to_pass_ids()
+            if not f2p_ids and not p2p_ids:
+                return {}, {}
+            out, _ = self.run("/run_tests.sh", timeout=timeout)
+            if self.swebench_verified:
+                eval_status_map, _ = self.get_logs_eval(self.test_spec, out)
+            elif self.swerebench:
+                eval_status_map, _ = get_logs_eval_swerebench(self.test_spec, out)
+            elif self.swegym:
+                eval_status_map, _ = get_logs_eval_swegym(self.test_spec, out)
+            elif self.swesmith:
+                eval_status_map = self.parse_logs(out) or {}
+            else:
+                eval_status_map = {}
+            esm = eval_status_map or {}
+            f2p_map = {tid: str(esm.get(tid, "")).upper() == "PASSED" for tid in f2p_ids}
+            p2p_map = {tid: str(esm.get(tid, "")).upper() == "PASSED" for tid in p2p_ids}
+            return f2p_map, p2p_map
+        except Exception as e:
+            self.logger.info(f"get_f2p_and_p2p_status error: {repr(e)}")
+            return {}, {}
+
     def get_fail_to_pass_ids(self) -> List[str]:
         """Return the FAIL_TO_PASS list for the current task across flavors.
 

@@ -35,12 +35,20 @@ class SchedulerConfig:
     m_max: int = 6               # hard cap on |ACTIVE|
     expand_count: int = 2        # tests promoted from POOL on stall-expand
 
-    # Dense reward weights
+    # Dense reward weights (F2P)
     alpha: float = 1.0           # per newly-solved test (the strongest signal)
     beta: float = 0.2            # per stall-expansion (cost of getting stuck)
     delta: float = 0.5           # per regression on cooldown re-check
     gamma: float = 0.01          # per scheduler tick (per eval cadence)
     eta: float = 0.05            # weight on the 1/(|ACTIVE|+1) shaping term
+
+    # PASS_TO_PASS (regression-guard) handling. See §3.7 of the design doc.
+    # P2P tests start "trusted" (assumed passing). Each scheduler tick may
+    # re-verify them (mid-episode pytest path); regressions accumulate.
+    # Terminal reward subtracts `w_regress * frac_p2p_broken`.
+    w_regress: float = 2.5       # default = w_solve / 2 (lighter than F2P credit)
+    delta_p2p_break: float = 0.5 # per newly-broken P2P this tick (dense)
+    delta_p2p_recover: float = 0.25  # per P2P recovered from broken (dense)
 
     # Terminal reward weights (applied separately in the env wrapper)
     w_solve: float = 5.0         # multiplier on (|RETIRED ∪ COOLDOWN_passing|)/N
@@ -73,17 +81,24 @@ class SchedulerEvent:
     n_cooldown: int
     n_retired: int
     n_pool: int
-    # diagnostics
+    # diagnostics — F2P
     solves: int = 0          # tests that turned green this tick
     expansions: int = 0      # number of stall-expand events
     regressions: int = 0     # cooldown re-checks that regressed
     promoted: int = 0        # individual tests pulled from POOL to ACTIVE
+    # diagnostics — P2P
+    p2p_newly_broken: int = 0    # P2P tests that flipped trusted → broken
+    p2p_newly_recovered: int = 0 # P2P tests that flipped broken → trusted
+    n_p2p_broken: int = 0        # cumulative count of broken P2P tests
+    n_p2p_total: int = 0         # total |PASS_TO_PASS|
     # shape components (for logging)
     r_alpha: float = 0.0
     r_beta: float = 0.0
     r_delta: float = 0.0
     r_gamma: float = 0.0
     r_eta: float = 0.0
+    r_p2p_break: float = 0.0   # dense P2P breakage penalty (negative)
+    r_p2p_recover: float = 0.0 # dense P2P recovery bonus (positive)
 
 
 @dataclass
@@ -103,6 +118,7 @@ class ActiveTestScheduler:
 
     fail_to_pass: List[str]
     config: SchedulerConfig = field(default_factory=SchedulerConfig)
+    pass_to_pass: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.active: "OrderedDict[str, int]" = OrderedDict()  # test -> stall counter
@@ -111,10 +127,16 @@ class ActiveTestScheduler:
         self.retired: List[str] = []
         # Promote the initial ACTIVE window.
         self._promote_from_pool(self.config.m_init)
+        # P2P state: each P2P test is True (trusted, presumed passing) or False
+        # (broken — last observed failing). Initial state: all trusted, since
+        # the dataset labels them as initially passing in the unmodified repo.
+        self.p2p_status: Dict[str, bool] = {t: True for t in (self.pass_to_pass or [])}
         # Counters for diagnostics across the episode.
         self.total_solves = 0
         self.total_expansions = 0
         self.total_regressions = 0
+        self.total_p2p_breaks = 0
+        self.total_p2p_recovers = 0
         self.total_ticks = 0
 
     # ------------------------------------------------------------------
@@ -143,6 +165,39 @@ class ActiveTestScheduler:
         """Public alias of `_tests_to_query` for the runtime."""
         return self._tests_to_query()
 
+    def p2p_tests_to_query(self) -> List[str]:
+        """All PASS_TO_PASS tests — runtime should re-check every k_steps tick.
+
+        Per user-confirmed setting (2026-05-20), mid-episode runs all P2P
+        each tick rather than sampling. This is expensive but faithful: a
+        regression in *any* P2P breaks the patch under SWE-bench semantics.
+        """
+        return list(self.p2p_status.keys())
+
+    def _update_p2p(
+        self, p2p_pass_map: Optional[Dict[str, bool]]
+    ) -> Tuple[int, int, int]:
+        """Apply a P2P pass-map snapshot and return (newly_broken,
+        newly_recovered, n_currently_broken).
+        """
+        if not p2p_pass_map:
+            n_broken = sum(1 for ok in self.p2p_status.values() if not ok)
+            return 0, 0, n_broken
+        newly_broken = 0
+        newly_recovered = 0
+        for t, was_passing in list(self.p2p_status.items()):
+            if t not in p2p_pass_map:
+                continue
+            is_passing = bool(p2p_pass_map[t])
+            if was_passing and not is_passing:
+                newly_broken += 1
+                self.p2p_status[t] = False
+            elif (not was_passing) and is_passing:
+                newly_recovered += 1
+                self.p2p_status[t] = True
+        n_broken = sum(1 for ok in self.p2p_status.values() if not ok)
+        return newly_broken, newly_recovered, n_broken
+
     def n_total(self) -> int:
         return len(self.fail_to_pass)
 
@@ -154,12 +209,20 @@ class ActiveTestScheduler:
             "retired": list(self.retired),
         }
 
-    def tick(self, pass_map: Dict[str, bool]) -> SchedulerEvent:
+    def tick(
+        self,
+        pass_map: Dict[str, bool],
+        p2p_pass_map: Optional[Dict[str, bool]] = None,
+    ) -> SchedulerEvent:
         """Advance the state machine using a fresh subset pass/fail map.
 
         `pass_map` only needs to contain entries for `tests_to_query()`; any
         missing key is treated as `failing` (conservative — the agent did not
         prove the test passes this tick).
+
+        `p2p_pass_map`, if provided, is used to update P2P regression state
+        and contribute a dense reward component. Pass `None` to skip P2P
+        checks this tick (cheap mode).
         """
         self.total_ticks += 1
         cfg = self.config
@@ -218,18 +281,28 @@ class ActiveTestScheduler:
         if not self.active and self.pool:
             promoted += self._promote_from_pool(cfg.m_init)
 
-        # --- Step 4: dense reward --------------------------------------
+        # --- Step 4: P2P state update (if a P2P map is supplied) -------
+        p2p_newly_broken, p2p_newly_recovered, n_p2p_broken = self._update_p2p(p2p_pass_map)
+
+        # --- Step 5: dense reward --------------------------------------
         n_active = len(self.active)
         r_alpha = cfg.alpha * solves
         r_beta = -cfg.beta * expansions
         r_delta = -cfg.delta * regressions
         r_gamma = -cfg.gamma
         r_eta = cfg.eta * (1.0 / (n_active + 1))
-        reward = r_alpha + r_beta + r_delta + r_gamma + r_eta
+        r_p2p_break = -cfg.delta_p2p_break * p2p_newly_broken
+        r_p2p_recover = cfg.delta_p2p_recover * p2p_newly_recovered
+        reward = (
+            r_alpha + r_beta + r_delta + r_gamma + r_eta
+            + r_p2p_break + r_p2p_recover
+        )
 
         self.total_solves += solves
         self.total_expansions += expansions
         self.total_regressions += regressions
+        self.total_p2p_breaks += p2p_newly_broken
+        self.total_p2p_recovers += p2p_newly_recovered
 
         return SchedulerEvent(
             reward=reward,
@@ -241,11 +314,17 @@ class ActiveTestScheduler:
             expansions=expansions,
             regressions=regressions,
             promoted=promoted,
+            p2p_newly_broken=p2p_newly_broken,
+            p2p_newly_recovered=p2p_newly_recovered,
+            n_p2p_broken=n_p2p_broken,
+            n_p2p_total=len(self.p2p_status),
             r_alpha=r_alpha,
             r_beta=r_beta,
             r_delta=r_delta,
             r_gamma=r_gamma,
             r_eta=r_eta,
+            r_p2p_break=r_p2p_break,
+            r_p2p_recover=r_p2p_recover,
         )
 
     def prompt_block(self, test_bodies: Optional[Dict[str, str]] = None) -> str:
@@ -282,31 +361,58 @@ class ActiveTestScheduler:
         self,
         full_pass_map: Optional[Dict[str, bool]] = None,
         tokens_used: int = 0,
+        p2p_pass_map: Optional[Dict[str, bool]] = None,
     ) -> Tuple[float, Dict[str, float]]:
-        """Compute the terminal reward from a *full* pass/fail map over `fail_to_pass`.
+        """Compute the terminal reward from full FAIL_TO_PASS + PASS_TO_PASS maps.
 
-        If `full_pass_map` is None we fall back to (retired ∪ passing-cooldown)
-        as the "solved" set — useful when the caller cannot afford a final
-        full-suite run.
+        - `full_pass_map`: pass/fail per `fail_to_pass` test. None → fall back to
+          (retired ∪ passing-cooldown).
+        - `p2p_pass_map`: pass/fail per `pass_to_pass` test. None → fall back to
+          internal `self.p2p_status` (the last seen state, updated by `tick()`).
+          With v1 default (no mid-episode P2P ticks), this fallback is just the
+          initial "all trusted" state, so frac_p2p_broken=0 — i.e. the env wrapper
+          must supply a real terminal P2P map for the regression penalty to fire.
+
+        Returns (total_reward, breakdown_dict). Breakdown keys:
+        `frac_solved`, `r_solve`, `r_token`, `frac_p2p_broken`, `r_regress`,
+        `tokens_used`.
         """
         cfg = self.config
         n = max(1, self.n_total())
 
+        # FAIL_TO_PASS / solve credit
         if full_pass_map is None:
-            solved = set(self.retired) | {
-                t for t in self.cooldown.keys()  # presumed passing while in cooldown
-            }
+            solved = set(self.retired) | {t for t in self.cooldown.keys()}
         else:
             solved = {t for t, ok in full_pass_map.items() if ok}
+        frac_solved = len(solved) / n
+        r_solve = cfg.w_solve * frac_solved
 
-        frac = len(solved) / n
-        r_solve = cfg.w_solve * frac
+        # PASS_TO_PASS / regression penalty
+        n_p2p = len(self.p2p_status)
+        if p2p_pass_map is not None:
+            # Refresh internal state from the supplied map (only for keys present)
+            for t in list(self.p2p_status.keys()):
+                if t in p2p_pass_map:
+                    self.p2p_status[t] = bool(p2p_pass_map[t])
+            broken_set = {t for t, ok in self.p2p_status.items() if not ok}
+        else:
+            broken_set = {t for t, ok in self.p2p_status.items() if not ok}
+        frac_p2p_broken = (len(broken_set) / n_p2p) if n_p2p > 0 else 0.0
+        r_regress = -cfg.w_regress * frac_p2p_broken
+
+        # Token penalty
         r_token = -cfg.lam_token * (max(0, tokens_used) / max(1.0, cfg.token_ref))
-        r_final = r_solve + r_token
+
+        r_final = r_solve + r_regress + r_token
         breakdown = {
-            "frac_solved": frac,
+            "frac_solved": frac_solved,
             "r_solve": r_solve,
+            "frac_p2p_broken": frac_p2p_broken,
+            "r_regress": r_regress,
             "r_token": r_token,
             "tokens_used": float(tokens_used),
+            "n_p2p": float(n_p2p),
+            "n_p2p_broken": float(len(broken_set)),
         }
         return r_final, breakdown

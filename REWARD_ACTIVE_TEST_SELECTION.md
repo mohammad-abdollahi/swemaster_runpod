@@ -370,8 +370,82 @@ Tracking the things that drifted from the §3 design once code met reality:
 - **No `subset pytest` shim yet.** v2 ticks invoke the *full* test script
   and post-filter the pass map. The faster `pytest -k <ids>` path remains a
   TODO; not blocking v1.
-- **`PASS_TO_PASS` is intentionally ignored** by the scheduler. Those are
-  regression-guard tests; they belong in the terminal full-suite evaluation
-  (which `compute_final_reward()` reaches via the legacy
-  `_calculate_reward_swerebench` path under the hood), not in the
-  curriculum.
+- **`PASS_TO_PASS` was ignored in v1.0** (initial implementation, 2026-05-20
+  morning). User flagged this as unacceptable mid-day — a patch that fixes
+  F2P but breaks P2P is incorrect by SWE-bench semantics. Fixed in
+  **v1.1** (this commit): scheduler now also tracks P2P state. See §3.7
+  below.
+
+## 3.7 PASS_TO_PASS regression handling (v1.1, 2026-05-20)
+
+### Why this exists
+
+A patch that fixes the `FAIL_TO_PASS` set but breaks any `PASS_TO_PASS`
+test does NOT pass SWE-bench evaluation. The agent must respect both:
+- Make the F2P tests pass (positive credit).
+- Keep the P2P tests passing (no regressions).
+
+### State and reward
+
+Per-P2P state is a single bool: `True` = trusted (presumed passing),
+`False` = broken (last observed failing).
+- **Initial**: all P2P trusted (the unmodified repo passes them by
+  definition — they wouldn't be labeled P2P otherwise).
+- **Tick update** (`tick(f2p_map, p2p_pass_map=...)`): for any P2P in
+  `p2p_pass_map`, update state; count `newly_broken` and
+  `newly_recovered` for dense reward.
+
+Dense reward per tick (only with `RLLM_ACTIVE_TESTS_MID_EPISODE=1`):
+
+```
+r_p2p_break   = -δ_p2p_break  · #newly_broken   (default δ=0.5)
+r_p2p_recover = +δ_p2p_recover · #newly_recovered (default 0.25)
+```
+
+Terminal reward (always applied when the env supplies a P2P map):
+
+```
+r_regress = -w_regress · |P2P_broken| / |P2P|
+```
+
+Default `w_regress = w_solve / 2` (user-confirmed setting, 2026-05-20):
+this is lighter than F2P credit so a successful fix that breaks one P2P
+is still net-positive — but breaking many P2Ps quickly erodes the
+benefit. Hard-veto variant (`w_regress = w_solve`) is one env-var away.
+
+### Mid-episode P2P checking
+
+When `RLLM_ACTIVE_TESTS_MID_EPISODE=1` is set, every `k_steps` agent
+turns the env runs `/run_tests.sh` once and parses BOTH F2P + P2P from
+the same `eval_status_map`. **All P2P tests are checked** each tick
+(user-confirmed setting), not a sample. Cost: identical to a v2 F2P-only
+mid-episode tick (one `/run_tests.sh` per k_steps), since the same
+single test run produces both maps.
+
+### Env-var knobs added
+
+- `RLLM_ACTIVE_TESTS_W_REGRESS` (default = `w_solve / 2`)
+- `RLLM_ACTIVE_TESTS_DELTA_P2P_BREAK` (default 0.5)
+- `RLLM_ACTIVE_TESTS_DELTA_P2P_RECOVER` (default 0.25)
+
+### Runtime changes
+
+- `DockerRuntime.get_pass_to_pass_ids()` — NEW.
+- `DockerRuntime.get_f2p_and_p2p_status(timeout)` — NEW. Single
+  `/run_tests.sh` invocation returns both pass maps. Replaces the
+  separate `get_fail_to_pass_status` call in `compute_final_reward()`
+  (now both maps come from the same run).
+
+### Test coverage
+
+8 new unit tests in `test_active_tests.py` cover:
+- All-trusted initial state
+- Tick with no P2P map = no state change
+- Break dense penalty fires
+- Recovery dense bonus fires
+- Terminal reward subtracts proportional `r_regress`
+- Internal-state fallback when terminal P2P map is missing
+- Zero-impact when `pass_to_pass=[]`
+- Total counters accumulate across multiple ticks
+
+Total scheduler test count: **13 → 21**, all passing.
