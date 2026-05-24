@@ -77,6 +77,7 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         delta_p2p_recover=_env_float("RLLM_ACTIVE_TESTS_DELTA_P2P_RECOVER", 0.25),
         lam_token=_env_float("RLLM_ACTIVE_TESTS_LAM_TOKEN", 0.1),
         token_ref=_env_float("RLLM_ACTIVE_TESTS_TOKEN_REF", 32000.0),
+        token_penalty_cap=_env_float("RLLM_ACTIVE_TESTS_TOKEN_PENALTY_CAP", 3.0),
         max_block_chars=_env_int("RLLM_ACTIVE_TESTS_BLOCK_CHARS", 4000),
     )
 

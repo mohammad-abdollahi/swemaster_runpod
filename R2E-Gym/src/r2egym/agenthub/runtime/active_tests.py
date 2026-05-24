@@ -54,6 +54,13 @@ class SchedulerConfig:
     w_solve: float = 5.0         # multiplier on (|RETIRED ∪ COOLDOWN_passing|)/N
     lam_token: float = 0.1       # multiplier on tokens_used/token_ref
     token_ref: float = 32000.0   # token-penalty reference
+    # Hard cap on the token-penalty magnitude (in units of tokens/token_ref).
+    # Without this, a single trajectory with a pathological bash output (e.g.
+    # cat-ing a huge file → hundreds of MB of observation text) drives
+    # tokens_used to absurd values, exploding r_token (we observed −989 →
+    # a −495 reward → grad_norm spike of 5.4). Cap so the token penalty can
+    # never dominate the solve reward. Default 3.0 ⇒ max penalty = 3*lam_token.
+    token_penalty_cap: float = 3.0
 
     # Prompt formatting
     max_block_chars: int = 4000  # hard cap on the injected prompt-block size
@@ -402,7 +409,9 @@ class ActiveTestScheduler:
         r_regress = -cfg.w_regress * frac_p2p_broken
 
         # Token penalty
-        r_token = -cfg.lam_token * (max(0, tokens_used) / max(1.0, cfg.token_ref))
+        token_ratio = max(0, tokens_used) / max(1.0, cfg.token_ref)
+        token_ratio = min(token_ratio, cfg.token_penalty_cap)  # clamp pathological outputs
+        r_token = -cfg.lam_token * token_ratio
 
         r_final = r_solve + r_regress + r_token
         breakdown = {

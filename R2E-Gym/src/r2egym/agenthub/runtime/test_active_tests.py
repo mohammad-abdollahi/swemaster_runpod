@@ -309,6 +309,38 @@ def test_p2p_total_counters_accumulate_across_ticks():
     assert s.total_p2p_recovers == 2
 
 
+def test_token_penalty_is_capped_against_pathological_output():
+    """A trajectory with absurd token usage (e.g. cat-ing a huge file) must not
+    explode the reward. The token penalty is clamped at token_penalty_cap.
+    Regression test for the −989 r_token / grad_norm=5.4 spike observed in the
+    paper150 run at step 8.
+    """
+    s = ActiveTestScheduler(
+        fail_to_pass=["t0"],
+        config=SchedulerConfig(
+            w_solve=10.0, lam_token=0.1, token_ref=32000.0,
+            token_penalty_cap=3.0,
+        ),
+    )
+    # 317 million "tokens" (chars) — the pathological value we actually hit.
+    r, br = s.terminal_reward(full_pass_map={"t0": False}, tokens_used=316_000_000)
+    # Without the cap this would be ~ -987. With cap=3.0: -0.1 * 3.0 = -0.3.
+    assert br["r_token"] == pytest.approx(-0.3)
+    assert r >= -0.3 - 1e-6, f"token penalty not capped: r={r}"
+
+
+def test_token_penalty_normal_case_unaffected_by_cap():
+    s = ActiveTestScheduler(
+        fail_to_pass=["t0"],
+        config=SchedulerConfig(w_solve=10.0, lam_token=0.1, token_ref=32000.0,
+                               token_penalty_cap=3.0),
+    )
+    # 16k tokens → ratio 0.5 → penalty -0.05 (well under the cap)
+    r, br = s.terminal_reward(full_pass_map={"t0": True}, tokens_used=16000)
+    assert br["r_token"] == pytest.approx(-0.05)
+    assert br["r_solve"] == pytest.approx(10.0)
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
