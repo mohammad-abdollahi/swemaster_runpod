@@ -34,7 +34,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RLLM_USE_PARENT_VENV=1
 export RLLM_PROJECT_ROOT=/home/temp/swemaster_runpod
-export RLLM_MAX_ROLLOUT_CONCURRENCY=4
+export RLLM_MAX_ROLLOUT_CONCURRENCY=${RLLM_MAX_ROLLOUT_CONCURRENCY:-4}
 
 # ---- Active-Test-Selection scheduler -----------------------------------
 # Defaults below match SchedulerConfig defaults in active_tests.py. Override
