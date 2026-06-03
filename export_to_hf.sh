@@ -22,8 +22,19 @@ if [ -z "$EXP_DIR" ] || [ ! -d "$EXP_DIR" ]; then
   echo "ERROR: experiment dir not found: $EXP_DIR"; exit 1
 fi
 
-# Find the highest-numbered global_step_* checkpoint that has an actor/ dir.
-CKPT=$(ls -d "${EXP_DIR}"global_step_*/ 2>/dev/null | sort -t_ -k3 -n | tail -1)
+# Find the highest-numbered global_step_* checkpoint that HAS a populated
+# actor/ dir (verl's max_actor_ckpt_to_keep prunes older ones, so we must
+# skip empty/stale step dirs). sort -V handles numeric components correctly
+# inside path strings — the previous sort -t_ -k3 -n broke when EXP_DIR
+# had multiple underscores (e.g. timestamped subdirs).
+CKPT=""
+for d in $(ls -d "${EXP_DIR}"global_step_*/ 2>/dev/null | sort -V -r); do
+  # Require BOTH the FSDP shard AND config.json — config.json is written last,
+  # so its presence is the green light that the checkpoint is complete.
+  if [ -f "${d}actor/model_world_size_1_rank_0.pt" ] && [ -f "${d}actor/config.json" ]; then
+    CKPT="$d"; break
+  fi
+done
 if [ -z "$CKPT" ]; then
   echo "ERROR: no global_step_* checkpoint under $EXP_DIR"
   echo "Available:"; ls -la "$EXP_DIR"

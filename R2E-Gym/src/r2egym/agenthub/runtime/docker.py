@@ -187,6 +187,9 @@ class DockerRuntime(ExecutionEnvironment):
         self.swesmith = "swesmith" in self.docker_image
         self.swerebench = "swerebench" in self.docker_image
         self.swegym = "xingyaoww" in self.docker_image
+        # SWE-bench-Live: starryzhang/sweb.eval.<plat>.<id_with_1776>. Agent runs in-container,
+        # grading is deferred to Microsoft's evaluation harness (no /run_tests.sh in these images).
+        self.swelive = "starryzhang/sweb.eval" in self.docker_image
 
         if self.swesmith:
             # image_name = self.ds['image_name'].replace('__', '_1776_')
@@ -267,9 +270,9 @@ class DockerRuntime(ExecutionEnvironment):
         self.alt_path = alt_path
         self.command = command
         self.repo_name = (
-            self.ds["repo"] if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench else self.ds["repo_name"]
+            self.ds["repo"] if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench or self.swelive else self.ds["repo_name"]
         )
-        if not self.swesmith and not self.swegym and not self.swerebench:
+        if not self.swesmith and not self.swegym and not self.swerebench and not self.swelive:
             self.commit_json = (
                 self.ds["parsed_commit"]
                 if self.swebench_verified
@@ -324,7 +327,7 @@ class DockerRuntime(ExecutionEnvironment):
         self.setup_env()
 
         if self.use_lsp:
-            if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench:
+            if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench or self.swelive:
                 self.setup_lsp()
             else:
                 self.uv_setup_lsp()
@@ -887,6 +890,43 @@ class DockerRuntime(ExecutionEnvironment):
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"
             )
 
+    def setup_env_swelive(self):
+        # SWE-bench-Live images (starryzhang/sweb.eval.*) ship a working /testbed git repo
+        # but no /run_tests.sh and no conda env at /opt/miniconda3. We grade externally
+        # via the official Microsoft harness using the patches we collect.
+        #
+        # CRUCIAL: the R2E-Gym agent's tools (str_replace_editor, execute_bash, submit)
+        # have shebang `#!/root/.venv/bin/python`. SWE-bench-Verified setup creates
+        # /root/.venv as a symlink to its conda env. Without that symlink the kernel
+        # cannot run the tools and every agent action fails with "No such file or
+        # directory" - which is silent enough that the agent gives up after 2-3 steps.
+        # Point /root/.venv at the image's real python so the tool shebangs work.
+        try:
+            self.alt_path = "/"
+            self.run("git config --global --add safe.directory /testbed 2>/dev/null || true")
+            # locate the image's python and wire /root/.venv to it
+            py_path_out, _ = self.run(
+                "bash -c 'p=$(command -v python || command -v python3); "
+                "[ -n \"$p\" ] && echo $p || echo /usr/local/bin/python'", timeout=30)
+            py_path = (py_path_out or "/usr/local/bin/python").strip().splitlines()[-1].strip()
+            # parent dir (e.g. /usr/local/bin -> /usr/local)
+            parent = os.path.dirname(os.path.dirname(py_path)) if py_path else "/usr/local"
+            self.run("rm -rf /root/.venv 2>/dev/null || true")
+            self.run(f"ln -s {parent} /root/.venv 2>/dev/null || true")
+            # sanity-check
+            check_out, check_ec = self.run(
+                "bash -c '[ -x /root/.venv/bin/python ] && echo OK || echo FAIL'", timeout=10)
+            self.logger.info(f"swelive python wiring: py={py_path} parent={parent} check={check_out.strip()}")
+            # The R2E-Gym tools import chardet at startup. Install it through the
+            # SAME python that the tool shebang (/root/.venv/bin/python) will use,
+            # so it lands in whatever sys.prefix that interpreter computes.
+            self.run("/root/.venv/bin/python -m pip install --quiet --disable-pip-version-check chardet 2>/dev/null || "
+                     "/root/.venv/bin/python -m pip install --quiet --break-system-packages --disable-pip-version-check chardet 2>/dev/null || true",
+                     timeout=120)
+            self.logger.info(f"Environment setup completed for swelive: {self.docker_image}")
+        except Exception as e:
+            self.logger.error(f"Error setting up environment for swelive: {repr(e)}")
+
     def setup_env(self):
         if self.swebench_verified:
             return self.setup_env_swebench()
@@ -899,6 +939,9 @@ class DockerRuntime(ExecutionEnvironment):
         elif self.swerebench:
             self.logger.info(f"Setting up environment for swerebench: {self.docker_image}")
             return self.setup_env_swerebench()
+        elif self.swelive:
+            self.logger.info(f"Setting up environment for swelive: {self.docker_image}")
+            return self.setup_env_swelive()
 
 
         self.logger.info(f"Setting up environment for r2e: {self.docker_image}")
@@ -1726,6 +1769,14 @@ class DockerRuntime(ExecutionEnvironment):
         elif self.swerebench:
             self.logger.info(f"SWE-rebench Calculating reward")
             return self._calculate_reward_swerebench(get_test_output=get_test_output, timeout=timeout)
+        elif self.swelive:
+            # SWE-bench-Live grading happens externally (Microsoft's evaluation.evaluation
+            # harness) on the collected predictions. Return a deferred sentinel so the
+            # trajectory still serialises and downstream aggregation can detect it.
+            self.logger.info("SWE-bench-Live: deferring grading to external harness")
+            if get_test_output:
+                return 0.0, "GRADED_EXTERNALLY"
+            return 0.0
         else:
             return self._calculate_reward_r2e(get_test_output=get_test_output, timeout=timeout)
 

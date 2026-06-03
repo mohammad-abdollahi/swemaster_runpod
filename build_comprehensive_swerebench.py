@@ -5,7 +5,7 @@ public Docker Hub `swerebench/...`). Selects N tasks whose images actually
 exist on Docker Hub, embeds make_test_spec, writes train/val verl parquets in
 the original scripts/data/swe_dataset.py schema.
 """
-import json, os, subprocess, sys, random
+import json, os, subprocess, sys, random, collections
 import pandas as pd
 sys.path.insert(0, "/home/temp/swemaster_runpod/DeepSWE_RL/rllm")
 sys.path.insert(0, "/home/temp/swemaster_runpod/R2E-Gym/src")
@@ -19,6 +19,10 @@ MAX_PROBE = int(os.environ.get("MAX_PROBE", "120"))
 # reward studies, where small FAIL_TO_PASS degenerates the partial-credit
 # signal to near-binary. Default 0 keeps the legacy behavior.
 MIN_FTP = int(os.environ.get("MIN_FTP", "0"))
+# Minimum PASS_TO_PASS size — gives the regression penalty term real coverage.
+MIN_P2P = int(os.environ.get("MIN_P2P", "0"))
+# Hard cap on tasks per repo (prevents one repo dominating). 0 = no cap.
+MAX_PER_REPO = int(os.environ.get("MAX_PER_REPO", "0"))
 OUT = os.environ.get(
     "OUT_DIR",
     "/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_comprehensive",
@@ -36,9 +40,15 @@ def image_exists(img):
         # local-only check: image must already be in the docker image store
         return subprocess.run(["docker", "image", "inspect", img],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    # cheap remote existence check, no full pull
-    return subprocess.run(["docker", "manifest", "inspect", img],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    # cheap remote existence check; hard 10s timeout — some missing tags hang.
+    try:
+        r = subprocess.run(["docker", "manifest", "inspect", img],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        return r.returncode == 0
+    except subprocess.TimeoutExpired:
+        subprocess.run(["pkill", "-f", f"docker manifest inspect {img}"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return False
 
 print("loading nebius/SWE-rebench (test split)...")
 ds = load_dataset("nebius/SWE-rebench", split="test")
@@ -52,6 +62,13 @@ print(f"{len(idx)} rows have a public swerebench/ image; probing up to {MAX_PROB
 
 rows, picked = [], []
 need = N_TRAIN + N_VAL
+repo_counts = collections.Counter()
+def _parse_list(v):
+    if isinstance(v, list): return v
+    if isinstance(v, str):
+        try: return json.loads(v)
+        except Exception: return []
+    return []
 for c, i in enumerate(idx[:MAX_PROBE]):
     if len(rows) >= need:
         break
@@ -59,18 +76,19 @@ for c, i in enumerate(idx[:MAX_PROBE]):
     img = r.get("docker_image") or r.get("image_name")
     if ":" not in img.split("/")[-1]:
         img = img + ":latest"
+    # Quality filters first (cheap, local); image existence (slow, network) last.
+    if MIN_FTP > 0:
+        if len(_parse_list(r.get("FAIL_TO_PASS"))) < MIN_FTP:
+            continue
+    if MIN_P2P > 0:
+        if len(_parse_list(r.get("PASS_TO_PASS"))) < MIN_P2P:
+            continue
+    if MAX_PER_REPO > 0:
+        if repo_counts[r.get("repo")] >= MAX_PER_REPO:
+            continue
     if not image_exists(img):
         continue
-    # Optional FAIL_TO_PASS-size filter for ATS studies.
-    if MIN_FTP > 0:
-        ftp = r.get("FAIL_TO_PASS") or []
-        if isinstance(ftp, str):
-            try:
-                ftp = json.loads(ftp)
-            except Exception:
-                ftp = []
-        if len(ftp) < MIN_FTP:
-            continue
+    repo_counts[r.get("repo")] += 1
     r["docker_image"] = img
     r.pop("ip", None)
     try:
