@@ -1,0 +1,11 @@
+# SWE-bench Verified ∩ SWE-rebench — matched by bare repo name (lowercased last path segment)
+# total matches: 7
+# SWE-bench Verified repos: astropy/astropy, django/django, matplotlib/matplotlib, mwaskom/seaborn, pallets/flask, psf/requests, pydata/xarray, pylint-dev/pylint, pytest-dev/pytest, scikit-learn/scikit-learn, sphinx-doc/sphinx, sympy/sympy
+bare_name	swe_bench_verified_repo	swe_rebench_repo
+astropy	astropy/astropy	astropy/astropy
+matplotlib	matplotlib/matplotlib	matplotlib/matplotlib
+scikit-learn	scikit-learn/scikit-learn	scikit-learn/scikit-learn
+seaborn	mwaskom/seaborn	mwaskom/seaborn
+sphinx	sphinx-doc/sphinx	sphinx-doc/sphinx
+sympy	sympy/sympy	sympy/sympy
+xarray	pydata/xarray	pydata/xarray

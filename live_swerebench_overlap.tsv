@@ -1,0 +1,86 @@
+# SWE-bench Live ∩ SWE-rebench — matched by bare repo name (lowercased last path segment)
+# total matches: 83
+bare_name	swe_bench_live_repo	swe_rebench_repo
+aiogram	aiogram/aiogram	aiogram/aiogram
+albumentations	albumentations-team/albumentations	albumentations-team/albumentations
+altair	vega/altair	altair-viz/altair
+arviz	arviz-devs/arviz	arviz-devs/arviz
+authlib	authlib/authlib	lepture/authlib
+babel	python-babel/babel	python-babel/babel
+beets	beetbox/beets	beetbox/beets
+black	psf/black	psf/black
+briefcase	beeware/briefcase	beeware/briefcase
+certbot	certbot/certbot	certbot/certbot
+checkov	bridgecrewio/checkov	bridgecrewio/checkov
+cibuildwheel	pypa/cibuildwheel	pypa/cibuildwheel
+conan	conan-io/conan	conan-io/conan
+csvkit	wireservice/csvkit	wireservice/csvkit
+datamodel-code-generator	koxudaxi/datamodel-code-generator	koxudaxi/datamodel-code-generator
+django-rest-framework-json-api	django-json-api/django-rest-framework-json-api	django-json-api/django-rest-framework-json-api
+docling	docling-project/docling	DS4SD/docling
+dvc	iterative/dvc	iterative/dvc
+electrum	spesmilo/electrum	spesmilo/electrum
+faker	joke2k/faker	joke2k/faker
+falcon	falconry/falcon	falconry/falcon
+feast	feast-dev/feast	feast-dev/feast
+filesystem_spec	fsspec/filesystem_spec	fsspec/filesystem_spec
+freezegun	spulec/freezegun	spulec/freezegun
+fusesoc	olofk/fusesoc	olofk/fusesoc
+geopandas	geopandas/geopandas	geopandas/geopandas
+gitpython	gitpython-developers/GitPython	gitpython-developers/GitPython
+graphrag	microsoft/graphrag	microsoft/graphrag
+haystack	deepset-ai/haystack	deepset-ai/haystack
+hydra	facebookresearch/hydra	facebookresearch/hydra
+ibis	ibis-project/ibis	ibis-project/ibis
+icloud_photos_downloader	icloud-photos-downloader/icloud_photos_downloader	icloud-photos-downloader/icloud_photos_downloader
+ipython	ipython/ipython	ipython/ipython
+kafka-python	dpkp/kafka-python	dpkp/kafka-python
+kedro	kedro-org/kedro	kedro-org/kedro
+kinto	Kinto/kinto	Kinto/kinto
+kombu	celery/kombu	celery/kombu
+lektor	lektor/lektor	lektor/lektor
+llama_deploy	run-llama/llama_deploy	run-llama/llama_deploy
+loguru	Delgan/loguru	Delgan/loguru
+matplotlib	matplotlib/matplotlib	matplotlib/matplotlib
+mechanicalsoup	MechanicalSoup/MechanicalSoup	MechanicalSoup/MechanicalSoup
+mesa	projectmesa/mesa	projectmesa/mesa
+meson	mesonbuild/meson	mesonbuild/meson
+networkx	networkx/networkx	networkx/networkx
+openai-agents-python	openai/openai-agents-python	openai/openai-agents-python
+osmnx	gboeing/osmnx	gboeing/osmnx
+pdm	pdm-project/pdm	pdm-project/pdm
+pillow	python-pillow/Pillow	python-pillow/Pillow
+pint	hgrecco/pint	hgrecco/pint
+pybamm	pybamm-team/PyBaMM	pybamm-team/PyBaMM
+pybamm	pybamm-team/PyBaMM	tinosulzer/PyBaMM
+pycasbin	casbin/pycasbin	casbin/pycasbin
+pypsa	PyPSA/PyPSA	PyPSA/PyPSA
+python	kubernetes-client/python	ipinfo/python  # CHECK-possible-false-match
+python-control	python-control/python-control	python-control/python-control
+python-dotenv	theskumar/python-dotenv	theskumar/python-dotenv
+python-sdk	modelcontextprotocol/python-sdk	DevoInc/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	dapr/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	modelcontextprotocol/python-sdk
+python-sdk	modelcontextprotocol/python-sdk	picovico/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	qiniu/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	smartcar/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	tcgdex/python-sdk  # CHECK-possible-false-match
+python-sdk	modelcontextprotocol/python-sdk	watson-developer-cloud/python-sdk  # CHECK-possible-false-match
+quantecon.py	QuantEcon/QuantEcon.py	QuantEcon/QuantEcon.py
+shapely	shapely/shapely	shapely/shapely
+smolagents	huggingface/smolagents	huggingface/smolagents
+sphinx	sphinx-doc/sphinx	sphinx-doc/sphinx
+sqllineage	reata/sqllineage	reata/sqllineage
+starlette	encode/starlette	encode/starlette
+streamlink	streamlink/streamlink	streamlink/streamlink
+structlog	hynek/structlog	hynek/structlog
+textual	Textualize/textual	Textualize/textual
+tox	tox-dev/tox	tox-dev/tox
+transitions	pytransitions/transitions	pytransitions/transitions
+trimesh	mikedh/trimesh	mikedh/trimesh
+twine	pypa/twine	pypa/twine
+urllib3	urllib3/urllib3	urllib3/urllib3
+weasyprint	Kozea/WeasyPrint	Kozea/WeasyPrint
+wemake-python-styleguide	wemake-services/wemake-python-styleguide	wemake-services/wemake-python-styleguide
+xarray	pydata/xarray	pydata/xarray
+yt-dlp	yt-dlp/yt-dlp	yt-dlp/yt-dlp
