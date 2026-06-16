@@ -327,7 +327,9 @@ class SWEEnv(BaseEnv):
         dense_sum = float(sum(e.reward for e in self.scheduler_events))
         total = r_final + dense_sum
         print(
-            f"!!!!!!! ATS terminal: frac_solved={breakdown.get('frac_solved'):.3f} "
+            f"!!!!!!! ATS terminal: "
+            f"instance_id={self.entry.get('instance_id', 'unknown')} "
+            f"frac_solved={breakdown.get('frac_solved'):.3f} "
             f"r_solve={breakdown.get('r_solve'):.3f} "
             f"frac_p2p_broken={breakdown.get('frac_p2p_broken'):.3f} "
             f"r_regress={breakdown.get('r_regress'):.3f} "
