@@ -169,6 +169,8 @@ exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=${SAVE_FREQ} \
+    trainer.max_actor_ckpt_to_keep=${MAX_CKPT_KEEP:-2} \
+    trainer.max_critic_ckpt_to_keep=${MAX_CKPT_KEEP:-2} \
     trainer.test_freq=${TEST_FREQ} \
     trainer.default_hdfs_dir=null \
     env.name=swe_arsenal \
