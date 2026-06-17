@@ -1,7 +1,23 @@
-# ATS-RL Ablation — Results So Far (snapshot 2026-06-16 ~12:14 UTC)
+# ATS-RL Ablation — Results So Far (snapshot 2026-06-16 ~12:21 UTC)
 
 Saved at user request before an afternoon break. Training left RUNNING (healthy,
 checkpointed every step). Resume from here.
+
+## 0. RESUME POINTER (read first — updated 2026-06-16 12:21 UTC)
+- **Control progress: step 12/20 in progress** (latest ckpt `global_step_11`).
+  ~75 min/step → step 20 ETA ~17:00 UTC if it runs unattended.
+- Trainer **alive**, **0 errors** all run, disk **255 GB free / 80%** (self-capping
+  at 2 ckpts via `MAX_CKPT_KEEP=2`, so disk is safe unattended).
+- reward steps 1–11: 0.726/0.666/0.506/0.354/0.737/0.643/0.465/0.149/0.294/1.857/0.268
+  (noisy plateau; grad_norm healthy 0.13–0.25; learning confirmed at §2).
+- **Left RUNNING unattended** — no babysitter. On afternoon return:
+  (1) check `ls .../control_live64_20260616-052151/global_step_*`; if `global_step_20`
+      exists and no trainer proc → control DONE, jump to §6 step 2 (export+probe+arms).
+  (2) if still running → resume the 5-min watch loop (prune/df/trainer/containers/errors).
+  (3) if crashed mid-run → relaunch `EXPERIMENT_NAME=control_live64_20260616-052151
+      MAX_CKPT_KEEP=2 setsid nohup bash run_control_live64.sh > /home/temp/control_live64.log 2>&1 &`
+      (verl auto-resumes from latest global_step_*).
+- Autonomous arm pipeline (S2→S1→S11) is fully scripted in §6 + `block_a_selection/README.md`.
 
 ## 1. Dataset (DONE)
 `data_examples/rl_data/swerebench_live64/` — **64 train / 16 val**, built by
