@@ -17,7 +17,7 @@ TRAIN_PARQUET=/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live6
 VAL_PARQUET=/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live64/test_00000_verl.parquet \
 MODEL_PATH=/home/temp/models/SWE-Master-4B-SFT \
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16} PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16} \
-TOTAL_EPOCHS=5 \
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-5} \
 AGENT_MAX_STEPS=150 TRAJECTORY_TIMEOUT=5400 MAX_RESPONSE=24576 \
 GPU_MEM_UTIL=0.30 \
 RLLM_MAX_ROLLOUT_CONCURRENCY=8 \
