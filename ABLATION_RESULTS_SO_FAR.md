@@ -3,9 +3,34 @@
 Saved at user request before an afternoon break. Training left RUNNING (healthy,
 checkpointed every step). Resume from here.
 
-## 0. RESUME POINTER (read first — updated 2026-06-16 12:21 UTC)
-- **Control progress: step 12/20 in progress** (latest ckpt `global_step_11`).
-  ~75 min/step → step 20 ETA ~17:00 UTC if it runs unattended.
+## 0. RESUME POINTER (read first — updated 2026-06-18 12:47 UTC)
+- **CONTROL TRAINING COMPLETE (2026-06-18 12:39 UTC).** 20 PPO steps, clean `training done.`
+  **Held-out val/test_score/swe = 0.125 (2/16)**; val pass@1 = 0.125.
+  verl persisted `global_step_1..19`; it does NOT write a `global_step_20` ckpt (final-step
+  save skipped by this fork) — `global_step_19` IS the final full-FT control model.
+  Per-step reward (s1–19): 0.726/0.666/0.506/0.354/0.737/0.643/0.465/0.149/0.294/1.857/
+  0.268/0.432/0.471/1.392/-0.127/0.713/0.527/0.39/0.799; grad_norm healthy 0.06–0.25 throughout.
+- **Control model EXPORTED** → `/home/temp/models/SWE-Master-4B-ATS-control-live64`
+  (2 safetensors shards + config + tokenizer; from global_step_19, CPU merge via export_to_hf.sh).
+- **COMPLETION PIPELINE IN PROGRESS** (autonomous): frozen-SFT probe LAUNCHED 12:47
+  (MODEL_PATH=SWE-Master-4B-SFT, 64-train 1-step, log /home/temp/probe_sft.log) →
+  next: probe_instances.py → probe_live64.csv → build 3 arm parquets (S2/S1/S11) →
+  train arms sequentially (TOTAL_TRAINING_STEPS=20) → export each.
+- EARLIER: crashed 06-17 12:23 (Ray SIGTERM during slow step-12), recovered+relaunched
+  06-18 01:18 from global_step_11; steps 12–20 all clean. Lesson: don't leave this run
+  fully unattended (slow-rollout/SIGTERM recurs).
+
+## (archived) RESUME POINTER — 2026-06-18 01:18 UTC
+- **CRASH + RECOVERY**: control was left running unattended after the 06-16 break;
+  it ran abnormally SLOW (~24h step11→step12-update, i.e. hanging rollouts) then took
+  a Ray-monitor **SIGTERM during the step-12 checkpoint write at 2026-06-17 12:23**,
+  and stayed down ~13h (no babysitter). Disk was NOT the cause (255G free, cap=2 holds).
+  Recovered 2026-06-18 01:18: GPU verified free + no zombie procs, old log saved to
+  `control_live64.log.crash_0617`, **relaunched** (resume_mode=auto from `global_step_11`).
+  LESSON: do not leave this run fully unattended for long; the slow-rollout/SIGTERM
+  failure recurs. Babysit, or accept lost time.
+- **Control progress: step 12/20 redoing** (latest ckpt `global_step_11`).
+  ~75 min/step nominal (but watch for slow-rollout hangs).
 - Trainer **alive**, **0 errors** all run, disk **255 GB free / 80%** (self-capping
   at 2 ckpts via `MAX_CKPT_KEEP=2`, so disk is safe unattended).
 - reward steps 1–11: 0.726/0.666/0.506/0.354/0.737/0.643/0.465/0.149/0.294/1.857/0.268
