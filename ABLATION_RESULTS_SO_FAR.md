@@ -12,10 +12,18 @@ checkpointed every step). Resume from here.
   0.268/0.432/0.471/1.392/-0.127/0.713/0.527/0.39/0.799; grad_norm healthy 0.06–0.25 throughout.
 - **Control model EXPORTED** → `/home/temp/models/SWE-Master-4B-ATS-control-live64`
   (2 safetensors shards + config + tokenizer; from global_step_19, CPU merge via export_to_hf.sh).
-- **COMPLETION PIPELINE IN PROGRESS** (autonomous): frozen-SFT probe LAUNCHED 12:47
-  (MODEL_PATH=SWE-Master-4B-SFT, 64-train 1-step, log /home/temp/probe_sft.log) →
-  next: probe_instances.py → probe_live64.csv → build 3 arm parquets (S2/S1/S11) →
-  train arms sequentially (TOTAL_TRAINING_STEPS=20) → export each.
+- **COMPLETION PIPELINE IN PROGRESS** (autonomous): frozen-SFT probe.
+  - **PROBE BATCH FIX (14:08)**: first probe (12:47) ran with batch=16 (run_control_live64.sh
+    line 19 *hardcoded* TRAIN_BATCH_SIZE=16) → 1 step only covered 16/64 instances. Fixed:
+    edited line 19 to `${TRAIN_BATCH_SIZE:-16}` (overridable). Killed that probe; relaunched
+    14:08 with **TRAIN_BATCH_SIZE=64 PPO_MINI_BATCH_SIZE=64 TOTAL_TRAINING_STEPS=1** →
+    1 batch = all 64 instances (micro_batch=1 bounds update memory). log /home/temp/probe_sft.log
+    (old batch16 partial: probe_sft_batch16_partial.log). base=SWE-Master-4B-SFT confirmed.
+  - next: probe_instances.py → probe_live64.csv (target ~64 rows) → build 3 arm parquets
+    (S2/S1/S11) → train arms sequentially (MODEL_PATH=SWE-Master-4B-SFT explicit,
+    TOTAL_TRAINING_STEPS=20) → export each to /home/temp/models/SWE-Master-4B-ATS-{S2-variance,S1-goldilocks,S11-tokeneff}.
+  - ALL arm trainings use base /home/temp/models/SWE-Master-4B-SFT (RUC-AIBox/SWE-Master-4B-SFT),
+    set MODEL_PATH explicitly (user-confirmed).
 - EARLIER: crashed 06-17 12:23 (Ray SIGTERM during slow step-12), recovered+relaunched
   06-18 01:18 from global_step_11; steps 12–20 all clean. Lesson: don't leave this run
   fully unattended (slow-rollout/SIGTERM recurs).
