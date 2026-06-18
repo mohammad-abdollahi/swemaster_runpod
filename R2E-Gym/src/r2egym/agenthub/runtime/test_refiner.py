@@ -191,19 +191,35 @@ class DockerTestValidator:
         # but NOT ignored build dirs/venv (no -x).
         self.runtime.run("git clean -fdq 2>/dev/null || true")
 
+    def _apply_verified(self, code_patch: str) -> bool:
+        """Apply ``code_patch`` and confirm it took effect via ``git diff`` (robust to
+        cosmetic whitespace warnings that make git apply return non-zero). Falls back to
+        a 3-way apply. Returns True iff the working tree changed."""
+        self.runtime.apply_patch(code_patch)
+        diff, _ = self.runtime.run("git diff --stat 2>/dev/null || true")
+        if diff and diff.strip():
+            return True
+        # fallback: 3-way merge apply (handles fuzzy context)
+        import uuid as _uuid
+        p = f"/tmp/refiner_{self.entry.get('instance_id','x')}_{_uuid.uuid4().hex[:8]}.patch"
+        self.runtime.run(f"cat > {p} <<'R2E_EOF_PATCH'\n{code_patch}\nR2E_EOF_PATCH")
+        self.runtime.run(f"git apply --3way --whitespace=fix {p} 2>/dev/null || "
+                         f"git apply --whitespace=fix {p} 2>/dev/null || true")
+        diff, _ = self.runtime.run("git diff --stat 2>/dev/null || true")
+        return bool(diff and diff.strip())
+
     def status_for_patch(self, code_patch: Optional[str]) -> Dict[str, bool]:
         """Reset to base, optionally apply ``code_patch``, run the F2P suite once.
         Returns ``{test_id: passed_bool}`` for the instance's FAIL_TO_PASS tests.
-        On any error returns ``{}`` (caller treats empty as "unknown")."""
+        On a genuine apply failure or error returns ``{}`` (caller treats empty as
+        "unknown" and fail-safes)."""
         self._ensure_runtime()
         try:
             self._reset_to_base()
             if code_patch:
-                out, rc = self.runtime.apply_patch(code_patch)
-                # git apply returns non-empty error text on failure
-                if rc and "error" in str(out).lower():
-                    logger.warning("apply_patch failed for %s: %s",
-                                   self.entry.get("instance_id"), str(out)[:200])
+                if not self._apply_verified(code_patch):
+                    logger.warning("patch did not apply for %s (no tree change)",
+                                   self.entry.get("instance_id"))
                     return {}
             f2p_status, _p2p = self.runtime.get_f2p_and_p2p_status(timeout=self.timeout)
             return {k: bool(v) for k, v in (f2p_status or {}).items()}
