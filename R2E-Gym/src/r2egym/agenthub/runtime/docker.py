@@ -706,21 +706,24 @@ class DockerRuntime(ExecutionEnvironment):
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
             self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
             # self.run("pip install chardet")
-            self.run("pip install chardet --trusted-host pypi-mirror.weizhipin.com -i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple")
+            # chardet is pre-baked in these images; the weizhipin mirror is unreachable
+            # here, so fail fast (--timeout/--retries) instead of burning ~75s x3 per
+            # container. Only attempt a (fast) reinstall if it's genuinely missing.
             check_chardet_num_all = 3
             for check_chardet_num in range(check_chardet_num_all):
                 result_check_chardet = self.run(
                             "python -m pip show chardet > /dev/null 2>&1 && echo true || echo false"
                         )
-                # self.logger.warning(
-                #     f"Attention!!! Is chardet installed!! {result_check_chardet}"
-                # )
                 if "false" in result_check_chardet[0]:
                     self.logger.info(
                     f"Re-installing chardet"
                 )
-                    self.run("sleep 10")
-                    self.run("python -m pip install chardet")
+                    self.run("sleep 1")
+                    self.run("python -m pip install chardet --timeout 5 --retries 0 "
+                             "--trusted-host pypi-mirror.weizhipin.com "
+                             "-i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple "
+                             "2>/dev/null || python -m pip install chardet --timeout 5 "
+                             "--retries 0 2>/dev/null || true")
                 else:
                     break
 
@@ -757,21 +760,24 @@ class DockerRuntime(ExecutionEnvironment):
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
             self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
             # self.run("pip install chardet")
-            self.run("pip install chardet --trusted-host pypi-mirror.weizhipin.com -i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple")
+            # chardet is pre-baked in these images; the weizhipin mirror is unreachable
+            # here, so fail fast (--timeout/--retries) instead of burning ~75s x3 per
+            # container. Only attempt a (fast) reinstall if it's genuinely missing.
             check_chardet_num_all = 3
             for check_chardet_num in range(check_chardet_num_all):
                 result_check_chardet = self.run(
                             "python -m pip show chardet > /dev/null 2>&1 && echo true || echo false"
                         )
-                # self.logger.warning(
-                #     f"Attention!!! Is chardet installed!! {result_check_chardet}"
-                # )
                 if "false" in result_check_chardet[0]:
                     self.logger.info(
                     f"Re-installing chardet"
                 )
-                    self.run("sleep 10")
-                    self.run("python -m pip install chardet")
+                    self.run("sleep 1")
+                    self.run("python -m pip install chardet --timeout 5 --retries 0 "
+                             "--trusted-host pypi-mirror.weizhipin.com "
+                             "-i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple "
+                             "2>/dev/null || python -m pip install chardet --timeout 5 "
+                             "--retries 0 2>/dev/null || true")
                 else:
                     break
             self.logger.info(f"Environment setup completed for swerebench: {self.docker_image}")
@@ -866,8 +872,7 @@ class DockerRuntime(ExecutionEnvironment):
             # self.run(
             #     "python -m pip install tree-sitter==0.20.4 tree_sitter_languages==1.10.2"
             # )
-            self.run("pip install chardet --trusted-host pypi-mirror.weizhipin.com -i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple")
-
+            # chardet pre-baked; dead mirror -> fail fast (see note above).
             check_chardet_num_all = 3
             for check_chardet_num in range(check_chardet_num_all):
                 result_check_chardet = self.run(
@@ -877,8 +882,9 @@ class DockerRuntime(ExecutionEnvironment):
                     self.logger.info(
                      f"Re-installing chardet"
                 )
-                    self.run("sleep 10")
-                    self.run("python -m pip install chardet")
+                    self.run("sleep 1")
+                    self.run("python -m pip install chardet --timeout 5 --retries 0 "
+                             "2>/dev/null || true")
                 else:
                     break
 
