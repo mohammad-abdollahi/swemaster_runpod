@@ -13,8 +13,8 @@ cd /home/temp/swemaster_runpod
 EXP=${EXPERIMENT_NAME:-control_live64_$(date +%Y%m%d-%H%M%S)}
 LOG=/home/temp/control_live64.log
 
-TRAIN_PARQUET=/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live64/train_00000_verl.parquet \
-VAL_PARQUET=/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live64/test_00000_verl.parquet \
+TRAIN_PARQUET=${TRAIN_PARQUET:-/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live64/train_00000_verl.parquet} \
+VAL_PARQUET=${VAL_PARQUET:-/home/temp/swemaster_runpod/data_examples/rl_data/swerebench_live64/test_00000_verl.parquet} \
 MODEL_PATH=/home/temp/models/SWE-Master-4B-SFT \
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16} PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16} \
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-5} \
