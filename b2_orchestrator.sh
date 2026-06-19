@@ -48,14 +48,21 @@ launch_b2(){
   setsid nohup bash run_control_live64.sh > /home/temp/arm_B2.log 2>&1 &
   log "launched B2 (exp=$EXP, 10 steps)"
 }
-# wait for GPU to be free before launching
-while [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)" -gt 2000 ]; do
-  log "GPU busy, waiting..."; sleep 30
-done
-launch_b2
-sleep 60   # let it spin up
+# If a B2 trainer is already running (e.g. orchestrator restarted to pick up a fix),
+# DON'T launch a second one — just supervise the existing run.
+if pgrep -f 'rllm.trainer.verl.train_agent_ppo' >/dev/null 2>&1; then
+  log "B2 trainer already running -> supervise existing (skip launch)"
+else
+  while [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)" -gt 2000 ]; do
+    log "GPU busy, waiting..."; sleep 30
+  done
+  launch_b2
+  sleep 60   # let it spin up
+fi
 
-OD(){ ls -dt /home/temp/training_outputs/ablation_block_b/${EXP}*/ 2>/dev/null | head -1; }
+# NOTE: the train script hardcodes default_local_dir under ablation_control/ (ignores
+# PROJECT_NAME), so checkpoints land at ablation_control/${EXP}, NOT ablation_block_b/.
+OD(){ ls -dt /home/temp/training_outputs/ablation_control/${EXP}*/ 2>/dev/null | head -1; }
 
 # 4) supervise: step-5 snapshot, relaunch-on-death, completion
 STEP5=0; RELAUNCH=0; MAXRELAUNCH=6
