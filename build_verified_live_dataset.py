@@ -30,7 +30,10 @@ ROOT = "/home/temp/swemaster_runpod"
 OUT = os.environ.get("OUT_DIR", os.path.join(ROOT, "data_examples/rl_data/swerebench_verlive"))
 N_TRAIN = int(os.environ.get("N_TRAIN", "64"))
 N_VAL = int(os.environ.get("N_VAL", "16"))
-MIN_FTP = int(os.environ.get("MIN_FTP", "1"))
+# Per-type F2P floor: keep ALL verified (even single-test, to preserve representation),
+# but require LIVE instances to be multi-test so R22 has tests to gate (hybrid build).
+MIN_FTP_VERIFIED = int(os.environ.get("MIN_FTP_VERIFIED", "1"))
+MIN_FTP_LIVE = int(os.environ.get("MIN_FTP_LIVE", "3"))
 MAX_FTP = int(os.environ.get("MAX_FTP", "40"))
 MAX_P2P = int(os.environ.get("MAX_P2P", "160"))   # keep terminal /run_tests.sh fast
 TRAIN_PER_REPO = int(os.environ.get("TRAIN_PER_REPO", "3"))
@@ -108,7 +111,8 @@ def main():
             continue
         nf = len(plist(r.get("FAIL_TO_PASS")))
         npp = len(plist(r.get("PASS_TO_PASS")))
-        if not (MIN_FTP <= nf <= MAX_FTP and 1 <= npp <= MAX_P2P):
+        minf = MIN_FTP_VERIFIED if repo in verified else MIN_FTP_LIVE
+        if not (minf <= nf <= MAX_FTP and 1 <= npp <= MAX_P2P):
             continue
         iid = r.get("instance_id")
         pool[repo].append((len(r.get("problem_statement") or ""), iid, dict(r), repo in verified))
