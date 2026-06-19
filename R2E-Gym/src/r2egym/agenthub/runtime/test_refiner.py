@@ -272,9 +272,8 @@ def specificity_gate(
 
     mutants = OperatorMutator(entry["patch"], seed=seed).generate(k)
     total_mutants = len(mutants) + 1  # +1 for pre-patch
-    M = max(1, -(-int(round(m_frac * total_mutants))))  # ceil(m_frac * total)
     res.n_mutants = total_mutants
-    res.m_threshold = M
+    res.m_threshold = 1   # principled gate: require >=1 operator-mutant kill (when any exist)
 
     v = DockerTestValidator(entry, timeout=timeout, verbose=verbose)
     try:
@@ -288,25 +287,27 @@ def specificity_gate(
     finally:
         v.close()
 
-    # A test "kills" a mutant if it FAILS (passed is False) on that mutant.
+    # Principled gate (gentler than a pure mutant-kill threshold): the ground-truth
+    # discrimination signal is failing the PRE-PATCH state (the test catches the real
+    # bug). Keep any test that passes gold AND fails pre-patch; operator-mutant kills are
+    # a quality SCORE. Drop a test only if it: (a) fails on gold (mislabeled), (b) passes
+    # pre-patch (doesn't catch the bug -> non-discriminative), or (c) catches the bug but
+    # kills ZERO operator mutants when mutants exist (completely non-specific/loose).
+    n_op = len(mutants)  # operator mutants (excludes pre-patch)
     kept, dropped = [], []
     for t in orig:
         passes_gold = gold_status.get(t, False)
+        fails_prepatch = base_status.get(t, True) is False     # caught the real bug
+        op_kills = sum(1 for st in mutant_statuses if st and st.get(t, True) is False)
+        total_kills = (1 if fails_prepatch else 0) + op_kills
+        res.kill_rate_per_test[t] = round(total_kills / total_mutants, 4)
         if not passes_gold:
-            dropped.append(t)
-            res.kill_rate_per_test[t] = 0.0
-            continue
-        kills = 0
-        # mutant #0: pre-patch
-        if base_status.get(t, True) is False:
-            kills += 1
-        for st in mutant_statuses:
-            # if a mutant's suite failed to produce status, it can't be counted as killed
-            if st and st.get(t, True) is False:
-                kills += 1
-        kill_rate = kills / total_mutants
-        res.kill_rate_per_test[t] = round(kill_rate, 4)
-        (kept if kills >= M else dropped).append(t)
+            dropped.append(t); continue            # mislabeled (fails on gold-patched repo)
+        if not fails_prepatch:
+            dropped.append(t); continue            # passes pre-patch -> doesn't test the fix
+        if n_op > 0 and op_kills == 0:
+            dropped.append(t); continue            # bug-catcher but fully non-specific
+        kept.append(t)
 
     if not kept:
         # never ship an empty F2P set: keep the single best discriminator (or originals)
