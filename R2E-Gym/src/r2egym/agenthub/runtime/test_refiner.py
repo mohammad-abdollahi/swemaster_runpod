@@ -431,3 +431,85 @@ def build_decomposition(entry: dict, test_id: str, decomposer: "TestDecomposer",
             dec.error = (dec.error + "; " if dec.error else "") + "no sub-tests survived gate"
     cache.put(dec)
     return dec
+
+
+def _as_list(v) -> list:
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return []
+    return []
+
+
+def build_instance_cache(entry: dict, decomposer: "TestDecomposer",
+                         cache: "DecompositionCache", timeout: int = 300) -> dict:
+    """Decompose + gate ALL of one instance's FAIL_TO_PASS tests, reusing a single
+    container (1 container + 1 gold-apply per instance). Caches gated survivors per
+    test. Skips tests already cached. Returns a summary dict.
+    """
+    import logging
+
+    from r2egym.agenthub.runtime.docker import DockerRuntime
+
+    instid = entry["instance_id"]
+    f2p = _as_list(entry.get("FAIL_TO_PASS"))
+    todo = []  # (test_id, Decomposition)
+    for tid in f2p:
+        if cache.get(instid, tid) is not None:
+            continue
+        src = extract_test_source(entry.get("test_patch", "") or "", tid)
+        dec = decomposer.decompose(
+            instid, tid, entry.get("problem_statement", "") or "",
+            entry.get("patch", "") or "", src,
+        )
+        todo.append((tid, dec))
+    summary = {"instance": instid, "n_f2p": len(f2p), "decomposed": len(todo),
+               "kept": 0, "tests_with_survivors": 0, "error": ""}
+    if not todo:
+        summary["note"] = "all cached / no f2p"
+        return summary
+
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", instid)
+    files = {}  # tid -> (test_file, dec)
+    for idx, (tid, dec) in enumerate(todo):
+        if dec.subtests:
+            files[tid] = (f"r2e_tests/test_r12_{safe}_{idx}.py", dec)
+
+    pre: Dict[str, dict] = {}
+    gold: Dict[str, dict] = {}
+    if files:
+        rt = DockerRuntime(ds=dict(entry), command=["/bin/bash", "-l"],
+                           backend="docker", logger=logging.getLogger("r12_cache"))
+        try:
+            for tid, (tf, dec) in files.items():
+                _container_write_file(rt, f"/testbed/{tf}", dec.full_code)
+                pre[tid], _ = run_adhoc_tests(rt, tf, [n for n, _ in dec.subtests], timeout)
+            rt.apply_patch(entry.get("patch", "") or "")
+            for tid, (tf, dec) in files.items():
+                _container_write_file(rt, f"/testbed/{tf}", dec.full_code)
+                gold[tid], _ = run_adhoc_tests(rt, tf, [n for n, _ in dec.subtests], timeout)
+        except Exception as e:
+            summary["error"] = repr(e)
+        finally:
+            try:
+                rt.close()
+            except Exception:
+                pass
+
+    for tid, dec in todo:
+        if not dec.subtests:
+            cache.put(dec)
+            continue
+        pv, gv = pre.get(tid, {}), gold.get(tid, {})
+        surv = [(n, c) for n, c in dec.subtests if pv.get(n) is False and gv.get(n) is True]
+        dec.subtests = surv
+        dec.n_subtests = len(surv)
+        if not surv:
+            dec.error = (dec.error + "; " if dec.error else "") + "no sub-tests survived gate"
+        cache.put(dec)
+        summary["kept"] += len(surv)
+        summary["tests_with_survivors"] += int(bool(surv))
+    return summary
