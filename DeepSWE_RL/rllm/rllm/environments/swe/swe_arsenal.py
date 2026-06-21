@@ -79,6 +79,10 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         token_ref=_env_float("RLLM_ACTIVE_TESTS_TOKEN_REF", 32000.0),
         token_penalty_cap=_env_float("RLLM_ACTIVE_TESTS_TOKEN_PENALTY_CAP", 3.0),
         max_block_chars=_env_int("RLLM_ACTIVE_TESTS_BLOCK_CHARS", 4000),
+        # B1/R12 online refinement (prompt-only; reward unchanged). Default off.
+        refine_enabled=_env_flag("RLLM_ACTIVE_TESTS_REFINE", "0"),
+        refine_after=_env_int("RLLM_ACTIVE_TESTS_REFINE_AFTER", -1),
+        refine_max_subtests=_env_int("RLLM_ACTIVE_TESTS_REFINE_MAX", 4),
     )
 
 try:
@@ -179,6 +183,18 @@ class SWEEnv(BaseEnv):
         self.active_tests_mid_episode = _env_flag(
             "RLLM_ACTIVE_TESTS_MID_EPISODE", "0"
         )
+        # B1/R12 online refinement (prompt-only). When on, a stalled test's
+        # cached backtranslated decomposition is rendered into its prompt block.
+        # `refine_fn` is a pure offline cache lookup (no LLM/Docker at train time).
+        self.active_tests_refine = _env_flag("RLLM_ACTIVE_TESTS_REFINE", "0")
+        self.refine_cache_path = os.environ.get(
+            "RLLM_ACTIVE_TESTS_REFINE_CACHE",
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../../../../block_b_refinement/cache/decompositions.jsonl",
+            ),
+        )
+        self._refine_cache = None
         self.scheduler = None
         self.scheduler_config = None
         self.scheduler_events = []  # diagnostics per scheduler tick
@@ -191,6 +207,43 @@ class SWEEnv(BaseEnv):
             f"mid_episode={self.active_tests_mid_episode}"
         )
 
+
+    def _instance_id(self):
+        """Best-effort instance_id from the runtime (for the refine cache key)."""
+        try:
+            ds = getattr(self.env.runtime, "ds", None) or {}
+            iid = ds.get("instance_id")
+            if iid:
+                return iid
+            ts = getattr(self.env.runtime, "test_spec", None)
+            return getattr(ts, "instance_id", None)
+        except Exception:
+            return None
+
+    def _make_refine_fn(self, instance_id):
+        """Return a pure `refine_fn(test_id) -> [(name, code)] | None` backed by the
+        offline decomposition cache. No LLM/Docker is invoked at train time."""
+        if not instance_id:
+            return None
+        if self._refine_cache is None:
+            try:
+                from r2egym.agenthub.runtime.test_refiner import DecompositionCache
+                self._refine_cache = DecompositionCache(self.refine_cache_path)
+            except Exception as e:
+                print(f"!!!!!!! refine cache load failed: {e!r}")
+                return None
+        cache = self._refine_cache
+
+        def refine_fn(test_id):
+            try:
+                d = cache.get(instance_id, test_id)
+            except Exception:
+                return None
+            if d and getattr(d, "subtests", None):
+                return list(d.subtests)
+            return None
+
+        return refine_fn
 
     def reset(self) -> tuple[str, dict]:
         """Reset the environment to initial state.
@@ -266,6 +319,18 @@ class SWEEnv(BaseEnv):
                     pass_to_pass=pass_to_pass,
                     config=self.scheduler_config,
                 )
+                # B1/R12: attach the offline decomposition lookup when refinement
+                # is on. Pure cache read — no LLM/Docker at train time.
+                if self.active_tests_refine and self.scheduler_config.refine_enabled:
+                    iid = self._instance_id()
+                    rf = self._make_refine_fn(iid)
+                    if rf is not None:
+                        self.scheduler.refine_fn = rf
+                        print(
+                            f"!!!!!!!!!!!!!!!!!ActiveTests: refinement ON "
+                            f"(instance={iid}, cache={self.refine_cache_path}, "
+                            f"n_cached={len(self._refine_cache) if self._refine_cache else 0})"
+                        )
                 block = self.scheduler.prompt_block()
                 n_p2p = len(pass_to_pass)
                 instruction = (
@@ -390,6 +455,7 @@ class SWEEnv(BaseEnv):
             tick_msg = (
                 f"\n[active_tests update] solves={evt.solves} "
                 f"regressions={evt.regressions} expansions={evt.expansions} "
+                f"refinements={evt.refinements} "
                 f"p2p_broken_now={evt.n_p2p_broken}/{evt.n_p2p_total} "
                 f"(newly_broken={evt.p2p_newly_broken}, "
                 f"newly_recovered={evt.p2p_newly_recovered})\n"
