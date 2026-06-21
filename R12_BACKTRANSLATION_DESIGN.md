@@ -131,10 +131,11 @@ becomes denser/more discriminative without touching `active_tests.py`.
 - `block_b_refinement/` scaffold (README, audit/, collect_metrics.py, RESULTS.md table).
 
 **New for R12:**
-1. `test_refiner.py::TeacherClient` — provider-agnostic LLM wrapper; reads creds from
-   `.env`. One `generate_test(issue, gold_diff, changed_symbols) -> (code, func)` method
-   (+ optional 1 refine-retry given a failure trace). **Default teacher = Claude** (latest
-   Opus/Sonnet) via `anthropic` SDK; pluggable.
+1. `test_refiner.py::TeacherClient` — OpenAI wrapper (`openai` SDK v2.37), model
+   `gpt-5.4-mini`, key from `.env` var `API_KEY_OPENAI`. One
+   `generate_test(issue, gold_diff, changed_symbols) -> (code, func)` method (+ optional 1
+   refine-retry given a failure trace). Kept behind a thin interface so a different provider
+   can be swapped later.
 2. `test_refiner.py::DockerTestValidator.validate_new_test(entry, test_code, test_path)
    -> {passes_gold, fails_prepatch, gold_err, prepatch_err}` — the §3.2 two-run gate
    (writes the file into the container, runs pytest, reads exit/markers). This is the new
@@ -192,16 +193,16 @@ flags — identical to control, exactly as in B2. R12 changes *only which tests 
 
 ---
 
-## 8. Open decisions (need confirmation before coding)
+## 8. Decisions (locked)
 
-1. **Teacher LLM** — provider + model (you opened `.env` — presumably to add the key).
-   Recommend **Claude** (latest Opus/Sonnet via `anthropic`); the client is pluggable
-   (OpenAI/etc.) but I'll wire one provider first.
-2. **Dataset** — confirm **`swerebench_verlive`** (recommended, matches B2). Alternative:
-   the control's `swerebench_min_ftp5_v2` or `live64`, but those break B1-vs-B2 comparability.
-3. **Scope of "add"** — *augment* (append survivors to existing F2P, recommended) vs
-   *replace-if-degenerate* (only inject when F2P is a single/weak test). Augment is simpler
-   and the cleaner ablation.
+1. **Teacher LLM = OpenAI `gpt-5.4-mini`.** Client uses the `openai` SDK (v2.37 in venv),
+   reading the key from **`.env` var `API_KEY_OPENAI`** (⚠️ non-standard name — NOT
+   `OPENAI_API_KEY`). One `generate_test()` call/instance + ≤1 refine-retry on gate failure.
+2. **Dataset = `swerebench_verlive`** (64 train / 16 val) — matches B2, keeps B1/B2/B0
+   comparable. Output `swerebench_verlive_r12/`.
+3. **Add mode = augment** — always append surviving backtranslated tests to the existing
+   `FAIL_TO_PASS`; never drop gold tests.
+4. **Train = 10 steps** (batch 16, rollout.n=4, SFT base) — same matched compute as B2.
 
 ---
 
