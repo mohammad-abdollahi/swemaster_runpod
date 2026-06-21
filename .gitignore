@@ -42,3 +42,4 @@ Thumbs.db
 DeepSWE_RL/rllm/verl/
 !.claude/projects/*/memory/
 !.claude/projects/*/memory/*.md
+.env
