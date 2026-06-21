@@ -55,6 +55,12 @@ export RLLM_ACTIVE_TESTS_W_SOLVE=${RLLM_ACTIVE_TESTS_W_SOLVE:-5.0}
 export RLLM_ACTIVE_TESTS_LAM_TOKEN=${RLLM_ACTIVE_TESTS_LAM_TOKEN:-0.1}
 export RLLM_ACTIVE_TESTS_TOKEN_REF=${RLLM_ACTIVE_TESTS_TOKEN_REF:-32000.0}
 export RLLM_ACTIVE_TESTS_BLOCK_CHARS=${RLLM_ACTIVE_TESTS_BLOCK_CHARS:-4000}
+# B1/R12 online refinement (prompt-only; reward unchanged). Default off.
+export RLLM_ACTIVE_TESTS_REFINE=${RLLM_ACTIVE_TESTS_REFINE:-0}
+export RLLM_ACTIVE_TESTS_REFINE_TICK=${RLLM_ACTIVE_TESTS_REFINE_TICK:-0}
+export RLLM_ACTIVE_TESTS_REFINE_AFTER=${RLLM_ACTIVE_TESTS_REFINE_AFTER:--1}
+export RLLM_ACTIVE_TESTS_REFINE_MAX=${RLLM_ACTIVE_TESTS_REFINE_MAX:-4}
+export RLLM_ACTIVE_TESTS_REFINE_CACHE=${RLLM_ACTIVE_TESTS_REFINE_CACHE:-/home/temp/swemaster_runpod/block_b_refinement/cache/decompositions.jsonl}
 # PASS_TO_PASS regression-guard knobs. Left UNSET by default so the code
 # defaults apply (w_regress = w_solve/2; dense p2p break 0.5 / recover 0.25 —
 # see swe_arsenal.py:75-77). The f2p-only ablation (test-selection branch) sets
