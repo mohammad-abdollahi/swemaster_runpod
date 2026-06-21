@@ -309,3 +309,125 @@ class DecompositionCache:
 
     def __len__(self) -> int:
         return len(self._mem)
+
+
+# ---------------------------------------------------------------------------
+# Offline executable gate (Docker) — validates a decomposition's correctness.
+# NOT on the reward path: this runs once during cache-build so the guidance we
+# later show in the prompt is verified to discriminate (fails pre / passes gold).
+# ---------------------------------------------------------------------------
+import base64 as _base64
+import os as _os
+import tempfile as _tempfile
+
+_PYTEST = (
+    "python -m pytest --no-header -rA --tb=no -p no:cacheprovider "
+    "-W ignore::DeprecationWarning"
+)
+
+
+def _container_write_file(rt, container_path: str, content: str) -> None:
+    """Write `content` to `container_path` inside the running container."""
+    tmp = _tempfile.mktemp(suffix=".py")
+    with open(tmp, "w") as fh:
+        fh.write(content)
+    try:
+        d = _os.path.dirname(container_path)
+        if d:
+            rt.run(f"mkdir -p {d}")
+        rt.copy_to_container(tmp, container_path)
+    finally:
+        try:
+            _os.remove(tmp)
+        except OSError:
+            pass
+
+
+def run_adhoc_tests(rt, test_file: str, func_names: List[str], timeout: int = 300
+                    ) -> Tuple[Dict[str, bool], str]:
+    """Run `test_file` (a path under /testbed) in the container's conda env and
+    return ({func_name: passed}, raw_output). Unseen funcs default to False.
+    """
+    runner = (
+        "source /opt/miniconda3/bin/activate 2>/dev/null\n"
+        "conda activate testbed 2>/dev/null\n"
+        "cd /testbed\n"
+        f"{_PYTEST} {test_file} 2>&1\n"
+    )
+    _container_write_file(rt, "/tmp/r12_runner.sh", runner)
+    out, _ = rt.run("bash /tmp/r12_runner.sh", timeout=timeout)
+    out = re.sub(r"\x1b\[[0-9;]*m|\r", "", out or "")
+    verdict: Dict[str, bool] = {}
+    for m in re.finditer(r"^(PASSED|FAILED|ERROR)\s+(\S+)", out, re.MULTILINE):
+        status, node = m.group(1), m.group(2)
+        fn = node.split("::")[-1].split("[")[0]
+        # first definitive PASSED wins; otherwise keep failing
+        verdict[fn] = verdict.get(fn, False) or (status == "PASSED")
+    for fn in func_names:
+        verdict.setdefault(fn, False)
+    return verdict, out
+
+
+def validate_decomposition(entry: dict, dec: Decomposition, timeout: int = 300
+                           ) -> Tuple[List[Tuple[str, str]], dict]:
+    """Two-run executable gate in the instance image: keep sub-tests that FAIL on
+    the pre-patch repo AND PASS on the gold-patched repo. Returns (survivors,
+    verdicts). Requires the instance Docker image to be available locally.
+    """
+    import logging
+
+    from r2egym.agenthub.runtime.docker import DockerRuntime
+
+    instid = dec.instance_id
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", instid)
+    test_file = f"r2e_tests/test_r12_{safe}.py"
+    abs_file = f"/testbed/{test_file}"
+    names = [n for n, _ in dec.subtests]
+
+    # NB: pass an explicit logger — DockerRuntime.__init__ references self.backend
+    # before assigning it in the logger==None branch.
+    rt = DockerRuntime(ds=dict(entry), command=["/bin/bash", "-l"], backend="docker",
+                       logger=logging.getLogger("r12_gate"))
+    try:
+        # pre-patch (container starts at base_commit)
+        _container_write_file(rt, abs_file, dec.full_code)
+        pre, _ = run_adhoc_tests(rt, test_file, names, timeout)
+        # gold-patched (apply the code fix; sub-tests should now pass)
+        rt.apply_patch(entry.get("patch", "") or "")
+        _container_write_file(rt, abs_file, dec.full_code)  # ensure still present
+        gold, _ = run_adhoc_tests(rt, test_file, names, timeout)
+    finally:
+        try:
+            rt.close()
+        except Exception:
+            pass
+
+    survivors = [(n, c) for (n, c) in dec.subtests
+                 if pre.get(n) is False and gold.get(n) is True]
+    verdicts = {n: {"pre": pre.get(n), "gold": gold.get(n)} for n in names}
+    return survivors, verdicts
+
+
+def build_decomposition(entry: dict, test_id: str, decomposer: "TestDecomposer",
+                        cache: "DecompositionCache", gate: bool = True,
+                        timeout: int = 300) -> Decomposition:
+    """Cache-aware: return a cached decomposition or compute (LLM [+ gate]) and
+    cache it. Only gate-surviving sub-tests are stored when `gate=True`.
+    """
+    instid = entry["instance_id"]
+    cached = cache.get(instid, test_id)
+    if cached is not None:
+        return cached
+    src = extract_test_source(entry.get("test_patch", "") or "", test_id)
+    dec = decomposer.decompose(
+        instid, test_id, entry.get("problem_statement", "") or "",
+        entry.get("patch", "") or "", src,
+    )
+    if dec.subtests and gate:
+        survivors, verdicts = validate_decomposition(entry, dec, timeout)
+        dec.subtests = survivors
+        dec.n_subtests = len(survivors)
+        if not survivors:
+            dec.error = (dec.error + "; " if dec.error else "") + "no sub-tests survived gate"
+    cache.put(dec)
+    return dec
