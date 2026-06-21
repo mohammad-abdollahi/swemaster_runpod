@@ -55,6 +55,14 @@ export RLLM_ACTIVE_TESTS_W_SOLVE=${RLLM_ACTIVE_TESTS_W_SOLVE:-5.0}
 export RLLM_ACTIVE_TESTS_LAM_TOKEN=${RLLM_ACTIVE_TESTS_LAM_TOKEN:-0.1}
 export RLLM_ACTIVE_TESTS_TOKEN_REF=${RLLM_ACTIVE_TESTS_TOKEN_REF:-32000.0}
 export RLLM_ACTIVE_TESTS_BLOCK_CHARS=${RLLM_ACTIVE_TESTS_BLOCK_CHARS:-4000}
+# PASS_TO_PASS regression-guard knobs. Left UNSET by default so the code
+# defaults apply (w_regress = w_solve/2; dense p2p break 0.5 / recover 0.25 —
+# see swe_arsenal.py:75-77). The f2p-only ablation (test-selection branch) sets
+# all three to 0.0 at launch to train on FAIL_TO_PASS only with no p2p signal.
+# Forwarded here only when provided, so Ray workers inherit them explicitly.
+[ -n "${RLLM_ACTIVE_TESTS_W_REGRESS+x}" ]        && export RLLM_ACTIVE_TESTS_W_REGRESS
+[ -n "${RLLM_ACTIVE_TESTS_DELTA_P2P_BREAK+x}" ]  && export RLLM_ACTIVE_TESTS_DELTA_P2P_BREAK
+[ -n "${RLLM_ACTIVE_TESTS_DELTA_P2P_RECOVER+x}" ] && export RLLM_ACTIVE_TESTS_DELTA_P2P_RECOVER
 
 export PYTHONPATH=./DeepSWE_RL/rllm:./R2E-Gym/src:${PYTHONPATH:-}
 
