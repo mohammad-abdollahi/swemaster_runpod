@@ -187,6 +187,13 @@ class SWEEnv(BaseEnv):
         # cached backtranslated decomposition is rendered into its prompt block.
         # `refine_fn` is a pure offline cache lookup (no LLM/Docker at train time).
         self.active_tests_refine = _env_flag("RLLM_ACTIVE_TESTS_REFINE", "0")
+        # Tick mid-episode for stall-detection/refinement while keeping the v1
+        # reward exactly (no dense per-tick reward). Auto-on when refinement is
+        # enabled but v2 mid-episode reward is off.
+        self.refine_tick = (
+            _env_flag("RLLM_ACTIVE_TESTS_REFINE_TICK", "0")
+            or (self.active_tests_refine and not self.active_tests_mid_episode)
+        )
         self.refine_cache_path = os.environ.get(
             "RLLM_ACTIVE_TESTS_REFINE_CACHE",
             os.path.join(
@@ -389,7 +396,13 @@ class SWEEnv(BaseEnv):
             p2p_pass_map=p2p_map if p2p_map else None,
             tokens_used=self.tokens_used_approx,
         )
-        dense_sum = float(sum(e.reward for e in self.scheduler_events))
+        # Dense per-tick reward only counts in true v2 mid-episode mode. In
+        # refine_tick-only mode the ticks are for stall-detection/refinement and
+        # MUST NOT alter the reward -> exclude dense_sum (keeps v1 reward exact).
+        dense_sum = (
+            float(sum(e.reward for e in self.scheduler_events))
+            if self.active_tests_mid_episode else 0.0
+        )
         total = r_final + dense_sum
         print(
             f"!!!!!!! ATS terminal: frac_solved={breakdown.get('frac_solved'):.3f} "
@@ -433,9 +446,13 @@ class SWEEnv(BaseEnv):
         # machine, attaching a compact summary block to the observation.
         # Per user-confirmed setting, mid-episode P2P checking runs ALL P2P
         # tests every k_steps (cost: ~1 full pytest run per tick).
+        # Tick when v2 mid-episode reward is on, OR when refinement needs
+        # stall-detection (refine_tick) — in the latter case the reward stays
+        # exactly the v1 ATS-RL reward (no dense override; dense_sum excluded in
+        # compute_final_reward). See `RLLM_ACTIVE_TESTS_REFINE_TICK`.
         if (
             self.scheduler is not None
-            and self.active_tests_mid_episode
+            and (self.active_tests_mid_episode or self.refine_tick)
             and not done
             and self.total_steps > 0
             and (self.total_steps % self.scheduler.config.k_steps) == 0
@@ -463,7 +480,11 @@ class SWEEnv(BaseEnv):
             )
             obs_str = obs_str + tick_msg
             self.tokens_used_approx += len(tick_msg)
-            reward = float(evt.reward)
+            # Only the v2 mid-episode mode feeds the dense per-tick reward into
+            # training. In refine_tick-only mode the step reward is left exactly
+            # as the underlying env returned it (v1 ATS-RL reward preserved).
+            if self.active_tests_mid_episode:
+                reward = float(evt.reward)
             info = dict(info or {})
             info["active_tests_evt"] = {
                 "reward": evt.reward,
