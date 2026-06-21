@@ -28,8 +28,10 @@ run_arm(){
   if alive; then
     log "trainer already running -> supervise existing"
   else
-    while [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)" -gt 2000 ]; do
-      log "GPU busy, waiting..."; sleep 30
+    # Wait only if a REAL trainer is on the GPU. The host runs unrelated ~15GB
+    # `cudaa` jobs, so threshold is 40GB (a real trainer uses 60-134GB).
+    while [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)" -gt 40000 ]; do
+      log "GPU busy (>40GB, real trainer), waiting..."; sleep 30
     done
     env $RENV EXPERIMENT_NAME=$EXP PROJECT_NAME=$PROJ setsid nohup bash run_refine_arm.sh > $ALOG 2>&1 &
     log "launched $EXP"; sleep 60
