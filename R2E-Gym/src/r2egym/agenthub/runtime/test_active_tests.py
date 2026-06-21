@@ -341,6 +341,81 @@ def test_token_penalty_normal_case_unaffected_by_cap():
     assert br["r_solve"] == pytest.approx(10.0)
 
 
+# ---------------------------------------------------------------------------
+# B1 / R12 — online refinement annotation (prompt-only; reward must be UNCHANGED)
+# ---------------------------------------------------------------------------
+
+
+def _refine_stub(test_id):
+    """A pure decomposition callback: split a test into two minimal sub-tests."""
+    return [
+        (f"{test_id}__sub1", "def test_sub1():\n    assert target_behavior() == 1"),
+        (f"{test_id}__sub2", "def test_sub2():\n    assert edge_case() is None"),
+    ]
+
+
+def test_refinement_is_off_by_default():
+    s = _make(["t0", "t1", "t2"], m_init=1, k_steps=3)
+    assert s.config.refine_enabled is False
+    s.refine_fn = _refine_stub  # even with a fn set, default-off => no annotation
+    for _ in range(6):
+        s.tick({})  # everything failing
+    assert s.refined == {}
+    assert s.total_refinements == 0
+
+
+def test_refine_after_sentinel_resolves_to_k_steps():
+    assert SchedulerConfig(k_steps=4, refine_after=-1).refine_after == 4
+    assert SchedulerConfig(k_steps=4, refine_after=2).refine_after == 2
+
+
+def test_refine_annotation_appears_in_prompt_after_stall():
+    s = _make(["t0", "t1", "t2"], m_init=1, k_steps=5,
+              refine_enabled=True, refine_after=2)
+    s.refine_fn = _refine_stub
+    s.tick({"t0": False})   # stall counter t0 -> 1
+    assert "t0" not in s.refined
+    s.tick({"t0": False})   # stall counter t0 -> 2 == refine_after -> annotate
+    assert "t0" in s.refined
+    assert s.total_refinements == 1
+    block = s.prompt_block()
+    assert 'refined="true"' in block
+    assert "t0__sub1" in block and "t0__sub2" in block
+
+
+def test_reward_stream_identical_refine_on_vs_off():
+    """The HARD CONSTRAINT: per-tick reward + terminal reward are bit-identical
+    with refinement on vs off, given the same pass_map stream."""
+    common = dict(m_init=2, k_steps=3, cooldown_steps=2, m_max=4, expand_count=1)
+    s_off = _make(["t0", "t1", "t2", "t3"], refine_enabled=False, **common)
+    s_on = _make(["t0", "t1", "t2", "t3"], refine_enabled=True, refine_after=2, **common)
+    s_on.refine_fn = _refine_stub
+
+    stream = [
+        {"t0": False, "t1": False},   # stall both
+        {"t0": False, "t1": False},   # refine_after hit on 'on' (annotate)
+        {"t0": True, "t1": False},    # t0 solved -> cooldown
+        {"t1": False},                # t1 stalls -> expand
+        {"t0": False},                # cooldown re-check / regress path
+        {"t0": False, "t1": True, "t2": False, "t3": False},
+        {},                           # all failing
+        {"t2": True, "t3": True},
+    ]
+    r_off = [s_off.tick(dict(pm)).reward for pm in stream]
+    r_on = [s_on.tick(dict(pm)).reward for pm in stream]
+    assert r_off == r_on, f"reward stream diverged:\noff={r_off}\non ={r_on}"
+
+    # The 'on' scheduler really did refine (so the match is meaningful, not vacuous).
+    assert s_on.total_refinements > 0
+    assert s_off.total_refinements == 0
+
+    # Terminal reward must also be bit-identical.
+    term_pm = {"t0": True, "t1": False, "t2": True, "t3": False}
+    ro, bro = s_off.terminal_reward(full_pass_map=dict(term_pm), tokens_used=12345)
+    rn, brn = s_on.terminal_reward(full_pass_map=dict(term_pm), tokens_used=12345)
+    assert ro == rn and bro == brn
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

@@ -66,6 +66,16 @@ class SchedulerConfig:
     max_block_chars: int = 4000  # hard cap on the injected prompt-block size
     show_bodies: bool = False    # if True, scheduler caller can attach test bodies
 
+    # Online refinement (B1/R12) — PROMPT-ONLY, never touches the reward.
+    # When a FAIL_TO_PASS test stays unsolved for `refine_after` stall ticks while
+    # ACTIVE, the scheduler annotates it with a backtranslated decomposition (a list
+    # of smaller sub-tests) supplied by an injected `refine_fn`. The decomposition is
+    # rendered into the prompt block as guidance for that test ONLY — it is never
+    # scored and never enters tick()/terminal_reward(). Default off => exact control.
+    refine_enabled: bool = False
+    refine_after: int = -1          # stall-tick threshold; <0 -> resolved to k_steps
+    refine_max_subtests: int = 4    # cap on sub-tests rendered per refined test
+
     def __post_init__(self) -> None:
         if self.k_steps <= 0:
             raise ValueError(f"k_steps must be > 0 (got {self.k_steps})")
@@ -77,6 +87,13 @@ class SchedulerConfig:
             )
         if self.cooldown_steps < 0:
             raise ValueError(f"cooldown_steps must be >= 0 (got {self.cooldown_steps})")
+        # Resolve the refinement sentinel: <0 means "trigger at the stall point".
+        if self.refine_after < 0:
+            self.refine_after = self.k_steps
+        if self.refine_max_subtests < 1:
+            raise ValueError(
+                f"refine_max_subtests must be >= 1 (got {self.refine_max_subtests})"
+            )
 
 
 @dataclass
@@ -93,6 +110,8 @@ class SchedulerEvent:
     expansions: int = 0      # number of stall-expand events
     regressions: int = 0     # cooldown re-checks that regressed
     promoted: int = 0        # individual tests pulled from POOL to ACTIVE
+    refinements: int = 0     # stalled tests annotated with a decomposition this tick
+                             # (telemetry ONLY — never part of `reward`)
     # diagnostics — P2P
     p2p_newly_broken: int = 0    # P2P tests that flipped trusted → broken
     p2p_newly_recovered: int = 0 # P2P tests that flipped broken → trusted
@@ -145,6 +164,14 @@ class ActiveTestScheduler:
         self.total_p2p_breaks = 0
         self.total_p2p_recovers = 0
         self.total_ticks = 0
+        # Online-refinement state (prompt-only; see SchedulerConfig.refine_*).
+        # `refined[t]` holds the decomposition (list of (name, code)) to render for t.
+        # `refine_fn` is an optional callback(test_id) -> [(name, code)] injected by the
+        # env; it MUST be pure (no scheduler-state mutation). None in unit tests / when
+        # refinement is off. Nothing here is ever read by the reward computation.
+        self.refined: Dict[str, list] = {}
+        self.refine_fn = None
+        self.total_refinements = 0
 
     # ------------------------------------------------------------------
     # internals
@@ -238,6 +265,7 @@ class ActiveTestScheduler:
         expansions = 0
         regressions = 0
         promoted = 0
+        refinements = 0   # telemetry only; never enters the dense reward below
 
         # --- Step 1: tick COOLDOWN and re-verify expired entries -------
         # Process cooldown FIRST so that tests promoted to cooldown later in
@@ -273,6 +301,27 @@ class ActiveTestScheduler:
             else:
                 # Increment stall counter; if we hit k_steps, expand POOL.
                 self.active[t] += 1
+                # --- Prompt-only refinement annotation (B1/R12) -------------
+                # If this test has stalled for `refine_after` ticks, fetch its
+                # cached decomposition ONCE and stash it for prompt_block() to
+                # render. This sets `self.refined[t]` only; it does NOT touch the
+                # stall-expand logic or any reward branch that follows, so the
+                # reward stream is identical to refinement-off. `refine_fn` must
+                # be pure (no scheduler mutation).
+                if (
+                    cfg.refine_enabled
+                    and self.refine_fn is not None
+                    and self.active[t] >= cfg.refine_after
+                    and t not in self.refined
+                ):
+                    try:
+                        subs = self.refine_fn(t)
+                    except Exception:
+                        subs = None
+                    if subs:
+                        self.refined[t] = list(subs)[: cfg.refine_max_subtests]
+                        refinements += 1
+                # -----------------------------------------------------------
                 if self.active[t] >= cfg.k_steps:
                     self.active[t] = 0  # reset; expansion happens once per k window
                     n_promoted = self._promote_from_pool(cfg.expand_count)
@@ -308,6 +357,7 @@ class ActiveTestScheduler:
         self.total_solves += solves
         self.total_expansions += expansions
         self.total_regressions += regressions
+        self.total_refinements += refinements
         self.total_p2p_breaks += p2p_newly_broken
         self.total_p2p_recovers += p2p_newly_recovered
 
@@ -321,6 +371,7 @@ class ActiveTestScheduler:
             expansions=expansions,
             regressions=regressions,
             promoted=promoted,
+            refinements=refinements,
             p2p_newly_broken=p2p_newly_broken,
             p2p_newly_recovered=p2p_newly_recovered,
             n_p2p_broken=n_p2p_broken,
@@ -350,7 +401,26 @@ class ActiveTestScheduler:
         per_test = max(80, budget // max(1, len(self.active)))
         for t in self.active.keys():
             entry = f"  <test id=\"{t}\""
-            if test_bodies and t in test_bodies and cfg.show_bodies:
+            if cfg.refine_enabled and self.refined.get(t):
+                # Render the backtranslated decomposition as guidance for this
+                # (historically hard) test. Prompt-only — never affects scoring.
+                subs = self.refined[t]
+                entry += " refined=\"true\">\n"
+                entry += (
+                    "    <!-- This test was hard to satisfy; here are smaller "
+                    "sub-tests that together capture it. -->\n"
+                )
+                sub_budget = max(80, per_test // max(1, len(subs)))
+                for name, code in subs:
+                    snippet = (code or "").strip()
+                    if len(snippet) > sub_budget:
+                        snippet = snippet[:sub_budget] + "..."
+                    entry += (
+                        f"    <subtest name=\"{name}\">\n{snippet}\n"
+                        f"    </subtest>\n"
+                    )
+                entry += "  </test>"
+            elif test_bodies and t in test_bodies and cfg.show_bodies:
                 body = test_bodies[t].strip()
                 if len(body) > per_test - 40:
                     body = body[: per_test - 40] + "..."
