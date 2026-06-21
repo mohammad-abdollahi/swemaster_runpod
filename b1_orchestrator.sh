@@ -1,11 +1,11 @@
 #!/bin/bash
-# B1/R12 matched-ablation orchestrator — runs TWO 10-step arms sequentially on one GPU,
-# both ATS-RL v1 reward (MID_EPISODE=0) on swerebench_verlive, SFT base:
-#   arm 1 = baseline (refine OFF, tick ON)  -> /home/temp/models/SWE-Master-4B-ATS-B0-refoff
-#   arm 2 = refine   (refine ON)            -> /home/temp/models/SWE-Master-4B-ATS-B1-refon
-# Both tick identically; they differ ONLY in whether the decomposition is shown.
+# B1/R12 orchestrator — runs ONE 10-step training: ATS-RL + online test refinement,
+# v1 reward EXACTLY (MID_EPISODE=0), on swerebench_verlive, SFT base
+# (RUC-AIBox/SWE-Master-4B-SFT). Same ATS-RL pipeline as before; the ONLY change is the
+# backtranslation test-refinement (decomposition shown for a stalled FAIL_TO_PASS test).
 # Survives disconnect; relaunches verl on death (auto-resume); prunes checkpoints to
-# latest-2; exports each final model. Logs to /home/temp/b1_orchestrator.log.
+# latest-2; exports the final model to /home/temp/models/SWE-Master-4B-ATS-B1-r12.
+# Logs to /home/temp/b1_orchestrator.log.
 set +e
 cd /home/temp/swemaster_runpod
 LOG=/home/temp/b1_orchestrator.log
@@ -60,12 +60,8 @@ run_arm(){
   $RAY stop --force >> $LOG 2>&1; sleep 15
 }
 
-run_arm B0_refoff_verlive /home/temp/arm_B0_refoff.log \
-  "RLLM_ACTIVE_TESTS_REFINE=0 RLLM_ACTIVE_TESTS_REFINE_TICK=1" \
-  /home/temp/models/SWE-Master-4B-ATS-B0-refoff
-
-run_arm B1_refon_verlive /home/temp/arm_B1_refon.log \
+run_arm B1_r12_verlive /home/temp/arm_B1_r12.log \
   "RLLM_ACTIVE_TESTS_REFINE=1 RLLM_ACTIVE_TESTS_REFINE_TICK=1" \
-  /home/temp/models/SWE-Master-4B-ATS-B1-refon
+  /home/temp/models/SWE-Master-4B-ATS-B1-r12
 
 log "=== b1 orchestrator complete ==="
