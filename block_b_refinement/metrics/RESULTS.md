@@ -2,63 +2,71 @@
 
 **Branch:** `test-refinement-back-translation`
 **Run:** `B1_r12_verlive` (project `ablation_b1_r12`)
-**Date:** 2026-06-21 → 2026-06-22
-**Base model:** RUC-AIBox/SWE-Master-4B-SFT
-**Dataset:** `swerebench_verlive` (64 train / 16 val)
-**Exported model:** `/home/temp/models/SWE-Master-4B-ATS-B1-r12` (8.3 G, 2 safetensors)
+**Dataset:** `swerebench_verlive` — 80 instances (SWE-Verified + SWE-Live overlap), 64 train / 16 val
+**Final model:** `/home/temp/models/SWE-Master-4B-ATS-B1-r12` (8.3 G, exported 2026-06-22 23:52)
 
-## What this run is
+## What this is
 
-A single-arm training of **ATS-RL + online backtranslation test-refinement**. When a
-FAIL_TO_PASS test stalls (unsolved after `refine_after` ticks at `k_steps=20`), the
-gold-patch-derived decomposition is injected into the prompt as `<subtest>` blocks so the
-policy sees a smaller, more legible target. The refinement is **prompt-only** — it never
+ATS-RL + **online backtranslation test-refinement**: when a FAIL_TO_PASS test stalls
+(unsolved after `refine_after` ticks at `k_steps=20`), the gold-patch-derived decomposition
+is injected into the prompt as `<subtest>` blocks. Refinement is **prompt-only** — it never
 changes the reward.
 
-## Configuration
+## Training runs (cumulative)
 
-| Knob | Value |
-|------|-------|
-| Refinement | `RLLM_ACTIVE_TESTS_REFINE=1`, `REFINE_TICK=1` |
-| Reward mode | **v1 exactly** (`MID_EPISODE=0`) — terminal `w_solve·frac_solved`, `w_solve=10` |
-| k_steps (tick cadence) | 20 |
-| refine_after / refine_max | 1 tick / 4 subtests |
-| Batch / mini-batch | 16 / 16 |
-| Epochs / steps | 1 epoch = **4 PPO steps** (64 train ÷ batch 16); `total_training_steps=10` cap not binding |
-| Agent max steps / traj timeout | 150 / 5400 s |
-| GPU mem util | 0.30 |
+1. **Smoke run** (2026-06-21): 4 PPO steps from `SWE-Master-4B-SFT`, 1 epoch.
+   Model preserved at `/home/temp/models/SWE-Master-4B-ATS-B1-r12-smoke4step`.
+2. **Continuation run** (2026-06-22): **5 PPO steps** continued on top of the 4-step model
+   (`BASE_MODEL=...smoke4step`), then final validation. → **~9 cumulative PPO steps.**
+   (Configured `total_training_steps=6`; verl performed 5 update steps + the final validation
+   pass on the 16-instance val set — the "slow step 6" observed during monitoring was that
+   validation, not a 6th training step.)
 
-## Learning signal — reward trend (`critic/rewards/mean`)
+## Result — validation
 
-| PPO step | Mean reward |
-|----------|-------------|
-| 1 | −0.091 (baseline) |
-| 2 | **+0.481** |
-| 3 | −0.077 |
-| 4 | **+0.451** |
+**`val/test_score/swe = 0.1875`** (3/16 held-out instances solved) at end of the continuation run.
+For reference, the earlier Block-B B2/R22 run scored val 0.125 (different setup; not a controlled
+comparison).
 
-Mean reward rose from −0.091 to ~**+0.45–0.48** over one epoch (with normal PPO
-step-to-step variance). Top individual trajectory reward reached **+6.49** (a high-credit
-solve). The model is learning.
+## Learning signal — continuation reward trend (`critic/rewards/mean`)
 
-> Validation: not run (`TEST_FREQ=999`) — this run targeted the reward-trend learning
-> signal over one epoch, not a held-out eval. A separate eval can be run on the exported
-> checkpoint.
+| PPO step (continuation) | Mean reward |
+|---|---|
+| 1 | −0.254 |
+| 2 | **+1.141** |
+| 3 | +0.167 |
+| 4 | +0.163 |
+| 5 | +0.125 |
+
+After the step-2 spike the mean settles steadily around **+0.13** — consistently positive vs the
+≈−0.09 single-batch baseline. Top individual trajectory reward **+9.86**. Optimizer reset at the
+continuation start (HF-weight load, not full-state resume) explains the step-1 dip before recovery.
 
 ## Correctness guarantees (verified from logs)
 
-- **v1 reward preserved exactly:** all **256 / 256** `ATS terminal` episodes logged
-  `dense_sum=0.000` (0 with nonzero dense reward). The backtranslation refinement is
-  provably prompt-only and never enters the reward path.
-- **Refinement engaged:** refinement loaded on all 256 episodes; mid-episode ticks
-  confirmed firing (`maxticks=3` — decomposition triggered for stalled tests at steps
-  20/40/60 of long episodes).
-- **Mechanism = the design:** stall-detection tick (k=20) → gold-patch decomposition into
-  `<subtest>` prompt blocks → unchanged terminal reward.
+- **v1 reward preserved exactly:** **336 / 336** `ATS terminal` episodes logged `dense_sum=0.000`
+  (0 nonzero). The backtranslation refinement is provably prompt-only and never enters the reward path.
+- **Refinement engaged:** loaded on all 336 episodes; mid-episode ticks fired up to `maxticks=7`
+  (decomposition triggered for stalled FAIL_TO_PASS tests at steps 20/40/…/140 of long episodes).
+- **Mechanism = design:** stall-detect tick (k=20) → gold-patch decomposition into `<subtest>`
+  prompt blocks → unchanged terminal reward.
 
-## Run health
+## Config
 
-- Stable to completion after one early vLLM `EngineDeadError` restart (orchestrator
-  auto-relaunch from checkpoint; no data lost — no checkpoint existed yet at crash).
-- 0 OOM, disk stayed ≥ 94 G, miners kept killed throughout (watchdog).
-- Checkpoints pruned to latest-2; final exported via `export_to_hf.sh`.
+| Knob | Value |
+|---|---|
+| Refinement | `RLLM_ACTIVE_TESTS_REFINE=1`, `REFINE_TICK=1` |
+| Reward mode | **v1** (`MID_EPISODE=0`), terminal `w_solve·frac_solved`, `w_solve=10` |
+| k_steps | 20 |
+| Batch / mini-batch | 16 / 16 |
+| Continuation base | `SWE-Master-4B-ATS-B1-r12-smoke4step` |
+| Agent max steps / traj timeout | 150 / 5400 s |
+| Teacher decomposer | OpenAI `gpt-5.4-mini` (offline cache `block_b_refinement/cache/decompositions.jsonl`) |
+
+## Ops
+
+- Stable to completion (one early vLLM `EngineDeadError` on the very first attempt; orchestrator
+  auto-relaunched; no checkpoint lost). 0 OOM. Miners kept dead by `miner_killer.sh` watchdog.
+- **Dataset image cache:** all **80 verlive images** (SWE-Verified + SWE-Live) pulled to local
+  Docker via `pull_dataset_images.sh` (62 pulled, 0 failed) — no mid-rollout re-pull stalls for
+  future trainings.
