@@ -70,3 +70,27 @@ continuation start (HF-weight load, not full-state resume) explains the step-1 d
 - **Dataset image cache:** all **80 verlive images** (SWE-Verified + SWE-Live) pulled to local
   Docker via `pull_dataset_images.sh` (62 pulled, 0 failed) — no mid-rollout re-pull stalls for
   future trainings.
+
+---
+
+## B1/R12 NEW-DATA: backtranslation on 64/16 NEW SWE-Verified+SWE-Live (PAUSED at step 5/10)
+
+Identical backtranslation test-refinement method (REFINE=1, v1 reward, MID_EPISODE=0),
+**continued from `SWE-Master-4B-ATS-B1-r12`** (HF-weight load) on a FRESH dataset of NEW
+swerebench instances — sourced from `nebius/SWE-rebench`, filtered to the authoritative
+SWE-Verified (12) + SWE-Live (156) repo universe, **0 overlap** with the previously-trained
+verlive instances. 64 train / 16 val. Repos incl. astropy/matplotlib/xarray/sympy (Verified)
++ loguru/textual/certbot/conan/… (Live). Decomposition cache `decompositions_newverlive.jsonl`
+(163 records / 158 sub-tests across 64 instances).
+
+- **Run was PAUSED by the user at global_step_5 (5 of 10 planned PPO updates)** on 2026-06-23 to
+  power down the machine. Step 6 was mid-rollout and NOT checkpointed; last saved state = step 5.
+- **Reward trend (5 updates):** step1=+0.359, step2=+1.342, step3=+0.408, step4=−0.216,
+  step5=+0.913 (avg ≈ +0.56; noisy single-step variance typical for 64-instance GRPO batches,
+  net clearly positive/learning).
+- **v1 reward preserved:** 364/364 ATS terminals logged `dense_sum=0.000` — refinement is
+  provably prompt-only on the new data too. 0 crashes, 0 OOM over the 5 steps.
+- **Saved:** HF model `/home/temp/models/SWE-Master-4B-ATS-B1-r12-newverlive` (8.3G, from
+  global_step_5); verl checkpoints `…/ablation_b1_newdata/B1_newdata/global_step_{4,5}/` (63G ea,
+  **with optimizer state for true resume**). See `block_b_refinement/RESUME_NEWVERLIVE.md` for the
+  two continuation recipes (A: true resume from step 5; B: HF-weight continuation from the export).
