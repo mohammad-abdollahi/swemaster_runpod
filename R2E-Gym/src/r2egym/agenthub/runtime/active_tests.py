@@ -75,6 +75,13 @@ class SchedulerConfig:
     refine_enabled: bool = False
     refine_after: int = -1          # stall-tick threshold; <0 -> resolved to k_steps
     refine_max_subtests: int = 4    # cap on sub-tests rendered per refined test
+    # ONLINE TEST-REPLACING refinement (branch test-refinement-test-to-openai): when
+    # True, `refine_fn(test_id)` returns FULL node ids [(path::name, code)] and the
+    # scheduler REPLACES the stalled test with them in fail_to_pass + active, so the
+    # refined tests DRIVE the reward (the env runs them at terminal). When False, the
+    # legacy prompt-only behavior (B1/B3) is kept: refine_fn returns [(name, code)]
+    # rendered as guidance, never scored.
+    refine_replace: bool = False
 
     def __post_init__(self) -> None:
         if self.k_steps <= 0:
@@ -172,6 +179,37 @@ class ActiveTestScheduler:
         self.refined: Dict[str, list] = {}
         self.refine_fn = None
         self.total_refinements = 0
+        # Online test-REPLACEMENT bookkeeping (config.refine_replace). Maps an
+        # original test id -> the refined node ids that replaced it. `refined_nodes`
+        # is the set of refined node ids now in fail_to_pass (the env runs these in the
+        # container at terminal and merges their pass/fail into the F2P map).
+        self.replaced: Dict[str, list] = {}
+        self.refined_nodes: set = set()
+
+    def _replace_test(self, old: str, new_pairs: list) -> int:
+        """Replace stalled test `old` with refined nodes `new_pairs` = [(node_id, code)]
+        in fail_to_pass + active, so the refined tests drive the reward. Returns count
+        added. Prompt rendering for each new node is set via self.refined[node]."""
+        new_pairs = [(n, c) for (n, c) in new_pairs if n][: self.config.refine_max_subtests]
+        if not new_pairs:
+            return 0
+        # drop the original from every bucket + the scored set
+        self.active.pop(old, None)
+        if old in self.pool:
+            self.pool.remove(old)
+        self.cooldown.pop(old, None)
+        if old in self.fail_to_pass:
+            self.fail_to_pass = [t for t in self.fail_to_pass if t != old]
+        # add refined nodes as fresh ACTIVE, scored tests
+        for node, code in new_pairs:
+            if node not in self.fail_to_pass:
+                self.fail_to_pass.append(node)
+            self.active[node] = 0
+            self.refined_nodes.add(node)
+            # prompt render: show the refined test body for this node
+            self.refined[node] = [(node.split("::")[-1], code)]
+        self.replaced[old] = [n for n, _ in new_pairs]
+        return len(new_pairs)
 
     # ------------------------------------------------------------------
     # internals
@@ -313,12 +351,21 @@ class ActiveTestScheduler:
                     and self.refine_fn is not None
                     and self.active[t] >= cfg.refine_after
                     and t not in self.refined
+                    and t not in self.replaced
                 ):
                     try:
                         subs = self.refine_fn(t)
                     except Exception:
                         subs = None
-                    if subs:
+                    if subs and cfg.refine_replace:
+                        # ONLINE TEST-REPLACEMENT: swap the stalled test for the refined
+                        # node(s); they now drive the reward. Skip stall-expand for `t`
+                        # (it no longer exists in ACTIVE).
+                        if self._replace_test(t, subs):
+                            refinements += 1
+                            continue
+                    elif subs:
+                        # legacy prompt-only guidance (B1/B3)
                         self.refined[t] = list(subs)[: cfg.refine_max_subtests]
                         refinements += 1
                 # -----------------------------------------------------------

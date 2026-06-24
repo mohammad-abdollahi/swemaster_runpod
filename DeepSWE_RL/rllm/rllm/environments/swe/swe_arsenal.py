@@ -83,6 +83,9 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         refine_enabled=_env_flag("RLLM_ACTIVE_TESTS_REFINE", "0"),
         refine_after=_env_int("RLLM_ACTIVE_TESTS_REFINE_AFTER", -1),
         refine_max_subtests=_env_int("RLLM_ACTIVE_TESTS_REFINE_MAX", 4),
+        # ONLINE TEST-REPLACING refinement (test-refinement-test-to-openai): when on,
+        # stalled tests are refined live by OpenAI and REPLACE the scored test.
+        refine_replace=_env_flag("RLLM_ACTIVE_TESTS_ONLINE_REFINE", "0"),
     )
 
 try:
@@ -228,10 +231,50 @@ class SWEEnv(BaseEnv):
             return None
 
     def _make_refine_fn(self, instance_id):
-        """Return a pure `refine_fn(test_id) -> [(name, code)] | None` backed by the
-        offline decomposition cache. No LLM/Docker is invoked at train time."""
+        """Build the scheduler's stall→refine callback.
+
+        ONLINE mode (RLLM_ACTIVE_TESTS_ONLINE_REFINE=1, config.refine_replace): on stall,
+        call OpenAI gpt-5.4 live with the test + the trajectory-so-far, validate the
+        refined test in the agent's container (must currently fail), and return FULL node
+        ids [(path::name, code)] for the scheduler to REPLACE the scored test. The env
+        runs these nodes at terminal (see compute_final_reward).
+
+        LEGACY mode (prompt-only, B1/B3): return [(name, code)] from the offline cache.
+        """
         if not instance_id:
             return None
+
+        # ---- ONLINE test-replacing refinement -----------------------------
+        if getattr(self, "scheduler_config", None) is not None and self.scheduler_config.refine_replace:
+            try:
+                from r2egym.agenthub.runtime.online_refine import (
+                    OnlineRefineCache, refine_test_online,
+                )
+            except Exception as e:
+                print(f"!!!!!!! online_refine import failed: {e!r}")
+                return None
+            if self._refine_cache is None or not isinstance(self._refine_cache, OnlineRefineCache):
+                self._refine_cache = OnlineRefineCache(self.refine_cache_path)
+            cache = self._refine_cache
+
+            def refine_fn_online(test_id):
+                try:
+                    entry = getattr(self.env.runtime, "ds", None) or {}
+                    rt = self.env.runtime
+                    nodes = refine_test_online(dict(entry), test_id,
+                                               list(getattr(self, "_transcript", []) or []),
+                                               rt, cache)
+                    if nodes:
+                        print(f"!!!!!!! ONLINE REFINE replaced {test_id} -> "
+                              f"{[n for n, _ in nodes]}")
+                    return nodes or None
+                except Exception as e:
+                    print(f"!!!!!!! online refine failed for {test_id}: {e!r}")
+                    return None
+
+            return refine_fn_online
+
+        # ---- LEGACY prompt-only cache lookup ------------------------------
         if self._refine_cache is None:
             try:
                 from r2egym.agenthub.runtime.test_refiner import DecompositionCache
@@ -374,6 +417,31 @@ class SWEEnv(BaseEnv):
         self.tokens_used_approx += len(instruction)
         return (instruction, info)
 
+    def _run_refined_nodes(self):
+        """Run the online-refined test nodes ad-hoc in the agent's container and return
+        {node_id: passed}. Node ids are 'r2e_tests/...py::name'; grouped by file."""
+        try:
+            from r2egym.agenthub.runtime.test_refiner import run_adhoc_tests
+        except Exception as e:
+            print(f"!!!!!!! run_adhoc_tests import failed: {e!r}")
+            return {}
+        by_file = {}
+        for node in self.scheduler.refined_nodes:
+            path, _, name = node.partition("::")
+            by_file.setdefault(path, []).append((name, node))
+        out = {}
+        rt = self.env.runtime
+        for path, items in by_file.items():
+            names = [nm for nm, _ in items]
+            try:
+                verdict, _ = run_adhoc_tests(rt, path, names, self.reward_timeout)
+            except Exception as e:
+                print(f"!!!!!!! refined ad-hoc run failed for {path}: {e!r}")
+                verdict = {}
+            for nm, node in items:
+                out[node] = bool(verdict.get(nm, False))
+        return out
+
     def compute_final_reward(self):
         """Final reward.
 
@@ -395,6 +463,21 @@ class SWEEnv(BaseEnv):
         except Exception as e:
             print(f"!!!!!!! get_f2p_and_p2p_status failed in compute_final_reward: {e!r}")
             f2p_map, p2p_map = {}, {}
+        # ONLINE TEST-REPLACEMENT: when stalled tests were refined and swapped into the
+        # scored set, /run_tests.sh (built from the original make_test_spec) does not
+        # know them — run the refined nodes ad-hoc in the container and rebuild the F2P
+        # map over the scheduler's CURRENT fail_to_pass (refined nodes replace originals).
+        if getattr(self.scheduler, "refined_nodes", None):
+            refined_map = self._run_refined_nodes()
+            fp = list(self.scheduler.fail_to_pass)
+            f2p_map = {
+                t: (bool(refined_map.get(t, False)) if t in self.scheduler.refined_nodes
+                    else bool((f2p_map or {}).get(t, False)))
+                for t in fp
+            }
+            print(f"!!!!!!! ONLINE REFINE terminal: scored {len(fp)} F2P "
+                  f"({len(self.scheduler.refined_nodes)} refined nodes), "
+                  f"refined_pass={sum(1 for n in self.scheduler.refined_nodes if refined_map.get(n))}")
         r_final, breakdown = self.scheduler.terminal_reward(
             full_pass_map=f2p_map if f2p_map else None,
             p2p_pass_map=p2p_map if p2p_map else None,

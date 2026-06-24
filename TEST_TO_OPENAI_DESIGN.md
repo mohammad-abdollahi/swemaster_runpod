@@ -139,3 +139,30 @@ New:
   `build_refined_dataset.py`; validated by the gate before it enters training.
 - Collection pass uses the val-rollout path with `VAL_PARQUET=train`; if that proves awkward in
   verl, fall back to a standalone AgentExecutionEngine collection script (same dump format).
+
+---
+
+## UPDATE: INTEGRATED online refinement (current approach)
+
+Per user direction, refinement is **integrated into the single ATS-RL run** (no separate
+phases) and **replaces the scored test** (not prompt-only). Mechanism, reusing the
+scheduler's existing stall→`refine_fn` hook:
+
+- `RLLM_ACTIVE_TESTS_REFINE=1` + `RLLM_ACTIVE_TESTS_ONLINE_REFINE=1` (new
+  `SchedulerConfig.refine_replace`). On stall (`refine_after` ticks), `refine_fn` calls
+  **OpenAI gpt-5.4 live** with the test + trajectory-so-far (`online_refine.refine_test_online`).
+- The refined/split tests are written into the **agent's container** and admitted only if
+  they **currently FAIL** there (anti-reward-hacking safeguard; no 2nd container). gpt-5.4 is
+  instructed they must pass only under the gold fix.
+- `ActiveTestScheduler._replace_test` swaps the stalled test for the refined node id(s) in
+  `fail_to_pass` + `active`; they now drive `frac_solved`.
+- At terminal, `compute_final_reward` runs the refined nodes ad-hoc in the container
+  (`_run_refined_nodes`) and merges their pass/fail into the F2P map over the updated
+  `fail_to_pass`. Cache: `online_refine_<dataset>.jsonl` (one OpenAI call + safeguard per
+  `instance::test`, reused across epochs).
+- Run: single training on **swerebench_verified_live** (64/8), batch **16**, SFT base,
+  10 steps. Launcher `run_test_to_openai_arm.sh` (REFINE passthroughs), orchestrator
+  `online_refine_orchestrator.sh`. Final model → `SWE-Master-4B-TestToOpenAI-online`.
+
+The earlier two-phase design (above) is superseded by this integrated one. Reward is no
+longer "v1-exact" — refined tests are scored by design (the point of the integration).
