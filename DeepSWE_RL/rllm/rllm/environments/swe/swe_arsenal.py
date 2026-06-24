@@ -299,6 +299,10 @@ class SWEEnv(BaseEnv):
         self.total_steps = 0
         self.scheduler_events = []
         self.tokens_used_approx = 0
+        # Compact per-episode transcript for the optional test-to-OpenAI dump
+        # (only populated/written when RLLM_DUMP_TRAJ_DIR is set; otherwise the
+        # list just stays empty and nothing is written — original pipeline intact).
+        self._transcript = []
 
         # Polls docker runtime to get task instruction.
         instruction = self.env.get_task_instruction()
@@ -415,7 +419,40 @@ class SWEEnv(BaseEnv):
             f"p2p_broken={int(breakdown.get('n_p2p_broken', 0))}/{int(breakdown.get('n_p2p', 0))} "
             f"ticks={self.scheduler.total_ticks}"
         )
+        self._maybe_dump_trajectory(f2p_map, p2p_map, breakdown.get("frac_solved"))
         return total
+
+    def _maybe_dump_trajectory(self, f2p_map, p2p_map, frac_solved):
+        """When RLLM_DUMP_TRAJ_DIR is set, record this episode's per-test pass maps
+        + compact transcript to <dir>/<instance_id>.jsonl, keeping ONLY the latest
+        episode per instance (atomic overwrite — the last rollout reflects the
+        most-trained model; bounded disk; corruption-safe under concurrent
+        rollouts). Used by the test-to-OpenAI refiner to find unsolved-but-insightful
+        trajectories. Fully off (and zero-cost) when the env var is unset — keeps the
+        original ATS-RL pipeline byte-identical.
+        """
+        dump_dir = os.environ.get("RLLM_DUMP_TRAJ_DIR")
+        if not dump_dir:
+            return
+        try:
+            iid = self._instance_id() or "unknown"
+            safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(iid))
+            os.makedirs(dump_dir, exist_ok=True)
+            rec = {
+                "instance_id": iid,
+                "f2p_pass_map": f2p_map or {},
+                "p2p_pass_map": p2p_map or {},
+                "frac_solved": frac_solved,
+                "n_steps": self.total_steps,
+                "transcript": self._transcript,
+            }
+            final = os.path.join(dump_dir, f"{safe}.jsonl")
+            tmp = f"{final}.{os.getpid()}.tmp"
+            with open(tmp, "w") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            os.replace(tmp, final)  # atomic; last writer wins
+        except Exception as e:  # never let dumping break a rollout
+            print(f"!!!!!!! RLLM_DUMP_TRAJ_DIR dump failed: {e!r}")
 
     def step(self, action: str | Action) -> tuple[str, float, bool, bool, dict]:
         """Take a step in the environment.
@@ -440,6 +477,22 @@ class SWEEnv(BaseEnv):
         self.total_steps += 1
         obs_str = str(obs)
         self.tokens_used_approx += len(obs_str)
+
+        # Optional compact transcript capture for the test-to-OpenAI refiner.
+        # No-op unless RLLM_DUMP_TRAJ_DIR is set (checked lazily at dump time);
+        # we always append here so the dump has the full trajectory if enabled.
+        if os.environ.get("RLLM_DUMP_TRAJ_DIR"):
+            try:
+                cap = int(os.environ.get("RLLM_DUMP_TRAJ_OBS_CAP", "2000"))
+            except ValueError:
+                cap = 2000
+            act_str = action if isinstance(action, str) else str(action)
+            self._transcript.append({
+                "step": self.total_steps,
+                "fn": getattr(action_obj, "function_name", None),
+                "action": act_str[:cap],
+                "obs": obs_str[:cap],
+            })
 
         # Optional mid-episode pytest tick (env-var gated; OFF by default).
         # When on, runs /run_tests.sh every k_steps and drives the full state
