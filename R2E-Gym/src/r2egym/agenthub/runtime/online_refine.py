@@ -34,7 +34,7 @@ from r2egym.agenthub.runtime.test_refiner import (
     _strip_code_fence,
 )
 
-_MODEL = os.environ.get("RLLM_ONLINE_REFINE_MODEL", "gpt-5.4")
+_MODEL = os.environ.get("RLLM_ONLINE_REFINE_MODEL", "gpt-5.4-mini")
 _MAX_REFINED = int(os.environ.get("RLLM_ONLINE_REFINE_MAX", "4"))
 
 _SYSTEM = (

@@ -21,7 +21,7 @@ M_FINAL=/home/temp/models/SWE-Master-4B-TestToOpenAI-online
 STEPS=${STEPS:-10}
 BATCH=${BATCH:-16}
 REFINE_AFTER=${REFINE_AFTER:-2}
-OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4}
+OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
 CACHE=${REPO}/block_b_refinement/cache/online_refine_${DATASET}.jsonl
 
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[orch] lock held; exit" >> $LOG; exit 0; fi
