@@ -26,7 +26,7 @@ CACHE=${REPO}/block_b_refinement/cache/refinements_test_to_openai.jsonl
 # Base training set: swerebench_verified = 22/4 instances sourced from SWE-rebench whose
 # repos are ALL SWE-bench Verified (astropy/matplotlib/sympy/sphinx/xarray). Override
 # with DATASET=swerebench_comprehensive to use the original ATS-RL set instead.
-DATASET=${DATASET:-swerebench_verified}
+DATASET=${DATASET:-swerebench_verified_live}
 COMP=${REPO}/data_examples/rl_data/${DATASET}
 REFINED=${REPO}/data_examples/rl_data/${DATASET}_refined
 SFT=/home/temp/models/SWE-Master-4B-SFT
@@ -35,6 +35,7 @@ M_FINAL=/home/temp/models/SWE-Master-4B-TestToOpenAI
 P1_STEPS=${P1_STEPS:-70}
 P2_STEPS=${P2_STEPS:-10}
 OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4}
+BATCH=${BATCH:-16}   # 16 = documented sweet spot; 32 spins up 128 containers => ~1h GPU-idle/step
 
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[orch] lock held; exit" >> $LOG; exit 0; fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
@@ -93,7 +94,7 @@ run_phase phase1 /home/temp/arm_test_to_openai_p1.log \
   "BASE_MODEL=$SFT \
 TRAIN_PARQUET=$COMP/train_00000_verl.parquet \
 VAL_PARQUET=$COMP/test_00000_verl.parquet \
-TOTAL_TRAINING_STEPS=$P1_STEPS TOTAL_EPOCHS=80 \
+TOTAL_TRAINING_STEPS=$P1_STEPS TOTAL_EPOCHS=80 TRAIN_BATCH_SIZE=$BATCH PPO_MINI_BATCH_SIZE=$BATCH \
 RLLM_DUMP_TRAJ_DIR=$DUMP_DIR" \
   "$M_PHASE1"
 
@@ -130,7 +131,7 @@ run_phase phase2 /home/temp/arm_test_to_openai_p2.log \
   "BASE_MODEL=$M_PHASE1 \
 TRAIN_PARQUET=$P2_TRAIN \
 VAL_PARQUET=$COMP/test_00000_verl.parquet \
-TOTAL_TRAINING_STEPS=$P2_STEPS TOTAL_EPOCHS=80" \
+TOTAL_TRAINING_STEPS=$P2_STEPS TOTAL_EPOCHS=80 TRAIN_BATCH_SIZE=$BATCH PPO_MINI_BATCH_SIZE=$BATCH" \
   "$M_FINAL"
 
 log "=== test_to_openai orchestrator complete (final model: $M_FINAL) ==="
