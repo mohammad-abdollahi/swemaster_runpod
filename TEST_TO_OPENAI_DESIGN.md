@@ -1,9 +1,14 @@
 # Test-to-OpenAI Refinement — Design
 
 Branch: `test-refinement-test-to-openai`. Base model: `RUC-AIBox/SWE-Master-4B-SFT`
-(from scratch). Dataset: **original ATS-RL** `data_examples/rl_data/swerebench_comprehensive`
-(32 train / 4 val). Pipeline: the **original ATS-RL pipeline** (no in-training refinement during
-phase 1).
+(from scratch). Dataset: **`data_examples/rl_data/swerebench_verified`** (22 train / 4 val) —
+instances sourced from SWE-rebench whose **repos are all SWE-bench Verified** (the 7-repo
+SWE-bench-Verified ∩ SWE-rebench overlap from `verified_swerebench_overlap.tsv`: astropy,
+matplotlib, scikit-learn, seaborn, sphinx, sympy, xarray; only astropy/matplotlib/sympy/sphinx/
+xarray actually have instances in SWE-rebench → 26 total, 22/4 split). Built by
+`build_verified_swerebench_dataset.py`. Pipeline: the **original ATS-RL pipeline** (no
+in-training refinement during phase 1). Override with `DATASET=swerebench_comprehensive` to use
+the original ATS-RL set instead.
 
 ## Idea (user's spec)
 

@@ -3,12 +3,12 @@
 # Four phases, each gated on the previous, survives disconnect, relaunches the
 # trainer on death (verl auto-resume), prunes checkpoints to latest-2, kills miners:
 #
-#   PHASE 1  train 70 steps, ORIGINAL ATS-RL (REFINE=0), swerebench_comprehensive,
+#   PHASE 1  train 70 steps, ORIGINAL ATS-RL (REFINE=0), swerebench_verified (verified repos),
 #            SWE-Master-4B-SFT base, RLLM_DUMP_TRAJ_DIR on  -> export theta70
 #   REFINE   test_to_openai_refiner.py: unsolved+insightful F2P -> gpt-5.4 rewrite/split
 #            -> Docker gate -> refinements cache
-#   BUILD    build_refined_dataset.py: splice refined tests -> comprehensive_refined
-#   PHASE 2  continue +10 steps from theta70 on comprehensive_refined -> export final
+#   BUILD    build_refined_dataset.py: splice refined tests -> <dataset>_refined
+#   PHASE 2  continue +10 steps from theta70 on <dataset>_refined -> export final
 #
 # Logs: /home/temp/test_to_openai_orchestrator.log (+ per-phase arm logs).
 set +e
@@ -23,8 +23,12 @@ LOCK=/tmp/test_to_openai_orchestrator.lock
 OUTROOT=/home/temp/training_outputs/${PROJ}
 DUMP_DIR=${OUTROOT}/traj_dump
 CACHE=${REPO}/block_b_refinement/cache/refinements_test_to_openai.jsonl
-REFINED=${REPO}/data_examples/rl_data/swerebench_comprehensive_refined
-COMP=${REPO}/data_examples/rl_data/swerebench_comprehensive
+# Base training set: swerebench_verified = 22/4 instances sourced from SWE-rebench whose
+# repos are ALL SWE-bench Verified (astropy/matplotlib/sympy/sphinx/xarray). Override
+# with DATASET=swerebench_comprehensive to use the original ATS-RL set instead.
+DATASET=${DATASET:-swerebench_verified}
+COMP=${REPO}/data_examples/rl_data/${DATASET}
+REFINED=${REPO}/data_examples/rl_data/${DATASET}_refined
 SFT=/home/temp/models/SWE-Master-4B-SFT
 M_PHASE1=/home/temp/models/SWE-Master-4B-TestToOpenAI-phase1
 M_FINAL=/home/temp/models/SWE-Master-4B-TestToOpenAI
@@ -89,7 +93,7 @@ run_phase phase1 /home/temp/arm_test_to_openai_p1.log \
   "BASE_MODEL=$SFT \
 TRAIN_PARQUET=$COMP/train_00000_verl.parquet \
 VAL_PARQUET=$COMP/test_00000_verl.parquet \
-TOTAL_TRAINING_STEPS=$P1_STEPS TOTAL_EPOCHS=40 \
+TOTAL_TRAINING_STEPS=$P1_STEPS TOTAL_EPOCHS=80 \
 RLLM_DUMP_TRAJ_DIR=$DUMP_DIR" \
   "$M_PHASE1"
 
@@ -126,7 +130,7 @@ run_phase phase2 /home/temp/arm_test_to_openai_p2.log \
   "BASE_MODEL=$M_PHASE1 \
 TRAIN_PARQUET=$P2_TRAIN \
 VAL_PARQUET=$COMP/test_00000_verl.parquet \
-TOTAL_TRAINING_STEPS=$P2_STEPS TOTAL_EPOCHS=40" \
+TOTAL_TRAINING_STEPS=$P2_STEPS TOTAL_EPOCHS=80" \
   "$M_FINAL"
 
 log "=== test_to_openai orchestrator complete (final model: $M_FINAL) ==="
