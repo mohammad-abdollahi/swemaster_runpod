@@ -157,6 +157,9 @@ class OnlineRefineCache:
                 with self.path.open("a") as fh:
                     fh.write(json.dumps(o.to_record()) + "\n")
 
+    def __len__(self) -> int:
+        return len(self._mem)
+
 
 _client = None
 _client_lock = threading.Lock()
