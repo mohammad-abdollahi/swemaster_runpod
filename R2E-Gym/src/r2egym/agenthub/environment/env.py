@@ -13,6 +13,15 @@ from r2egym.agenthub.observation import Observation
 from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.agent.commands import ParseCommandBash
 
+
+def _make_runtime(backend, **kw):
+    """Select execution backend. 'apptainer' is the Docker-free HPC backend."""
+    if backend == "apptainer":
+        from r2egym.agenthub.runtime.apptainer import ApptainerRuntime
+        return ApptainerRuntime(**kw)
+    return DockerRuntime(backend=backend, **kw)
+
+
 cmd_parser = ParseCommandBash()
 
 port_file_path = "/var/tmp/lsp_port_session_abc.pid"
@@ -61,8 +70,8 @@ class RepoEnv(gym.Env):
         print("=self_ip="*20)
         print(f"!!!!!!!!!!!!!!!!!!!Very import, self_ip:{self.ip}")
         self.use_lsp = use_lsp
-        self.runtime = DockerRuntime(
-            ds=args.ds, command=["/bin/bash", "-l"], backend=backend, logger=self.logger, ip=self.ip, use_lsp = self.use_lsp
+        self.runtime = _make_runtime(
+            backend, ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, ip=self.ip, use_lsp=self.use_lsp
         )
         
         self.args = args
@@ -88,8 +97,8 @@ class RepoEnv(gym.Env):
         self.state = None
         self.done = False
         # also just recreate env again with the same args
-        self.runtime = DockerRuntime(
-            ds=self.args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=self.backend, ip=self.ip
+        self.runtime = _make_runtime(
+            self.backend, ds=self.args.ds, command=["/bin/bash", "-l"], logger=self.logger, ip=self.ip
         )
         return self.observation  # self.get_observation()
 

@@ -89,10 +89,15 @@ from swebench_fork_swerebench.harness.grading import get_eval_tests_report as ge
 from swebench_fork_swerebench.harness.grading import get_resolution_status as get_resolution_status_swerebench
 
 
-# SWE-smith specific imports
-from swesmith.profiles import registry as swesmith_registry
-from swesmith.harness.grading import get_eval_tests_report as get_eval_tests_report_swesmith
-from swesmith.constants import TEST_OUTPUT_START, TEST_OUTPUT_END
+# SWE-smith specific imports (optional: pulls tree-sitter packs; unused for swebench-verified)
+try:
+    from swesmith.profiles import registry as swesmith_registry
+    from swesmith.harness.grading import get_eval_tests_report as get_eval_tests_report_swesmith
+    from swesmith.constants import TEST_OUTPUT_START, TEST_OUTPUT_END
+except ImportError:  # pragma: no cover
+    swesmith_registry = None
+    get_eval_tests_report_swesmith = None
+    TEST_OUTPUT_START = TEST_OUTPUT_END = None
 
 
 
