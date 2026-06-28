@@ -38,12 +38,14 @@ PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
 GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.3}
 AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-150}
 TRAJ_TIMEOUT=${TRAJECTORY_TIMEOUT:-9000}
-# FSDP requires full [model,optimizer,extra] checkpoints (~63G each); model-only is rejected by
-# FSDPCheckpointManager. Disk is near-full, so use SAVE_FREQ=10 -> a SINGLE checkpoint at the
-# final step (no two coexisting -> fits in ~77G free). Export reads the model from it.
-# Tradeoff: no mid-run checkpoint, so a crash restarts from step 1 (config is stable -> low risk).
+# FSDP requires full [model,optimizer,extra] checkpoints (~63G each).
+# CRITICAL: verl's save-check runs for global_steps 1..(total-1) BEFORE the increment, then
+# returns at global_steps>=total. So a STEPS=10 run does 9 updates and the last save-eligible
+# step is 9 -> SAVE_FREQ must divide a step in 1..9 (e.g. 1 or 3), NOT 10 (10%anything in 1..9
+# never 0 => ZERO checkpoints saved => no model!). Disk freed (348G) so save every step + keep
+# latest-2 (prune): guarantees a final model (global_step_9) + crash-resume + intermediate ckpts.
 CKPT_CONTENTS=${CKPT_CONTENTS:-[model,optimizer,extra]}
-SAVE_FREQ=${SAVE_FREQ:-10}
+SAVE_FREQ=${SAVE_FREQ:-1}
 
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[orch] lock held; exit" >> $LOG; exit 0; fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
