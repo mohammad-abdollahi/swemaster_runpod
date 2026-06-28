@@ -179,6 +179,12 @@ class ActiveTestScheduler:
         self.refined: Dict[str, list] = {}
         self.refine_fn = None
         self.total_refinements = 0
+        # Non-wrapping per-test "consecutive ticks unsolved" counter used ONLY for the
+        # refine trigger. The curriculum counter `active[t]` wraps at k_steps (for pool
+        # expansion), so it cannot express a stall threshold larger than k_steps. This
+        # counter does NOT wrap, so `refine_after` is a true ticks-unsolved threshold
+        # (e.g. refine_after=14 with a 5-step tick cadence => refine at ~agent-step 70).
+        self.refine_stall: Dict[str, int] = {}
         # Online test-REPLACEMENT bookkeeping (config.refine_replace). Maps an
         # original test id -> the refined node ids that replaced it. `refined_nodes`
         # is the set of refined node ids now in fail_to_pass (the env runs these in the
@@ -336,9 +342,12 @@ class ActiveTestScheduler:
                 # Test solved this tick -> move to COOLDOWN.
                 newly_cooldown.append(t)
                 solves += 1
+                self.refine_stall.pop(t, None)
             else:
                 # Increment stall counter; if we hit k_steps, expand POOL.
                 self.active[t] += 1
+                # Non-wrapping ticks-unsolved counter for the refine trigger.
+                self.refine_stall[t] = self.refine_stall.get(t, 0) + 1
                 # --- Prompt-only refinement annotation (B1/R12) -------------
                 # If this test has stalled for `refine_after` ticks, fetch its
                 # cached decomposition ONCE and stash it for prompt_block() to
@@ -349,7 +358,7 @@ class ActiveTestScheduler:
                 if (
                     cfg.refine_enabled
                     and self.refine_fn is not None
-                    and self.active[t] >= cfg.refine_after
+                    and self.refine_stall.get(t, 0) >= cfg.refine_after
                     and t not in self.refined
                     and t not in self.replaced
                 ):
