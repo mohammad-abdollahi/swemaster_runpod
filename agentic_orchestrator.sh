@@ -38,10 +38,12 @@ PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
 GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.3}
 AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-150}
 TRAJ_TIMEOUT=${TRAJECTORY_TIMEOUT:-9000}
-# Checkpoint contents: default to model-only ([model,extra], ~12G each) instead of
-# [model,optimizer,extra] (~60G each) to fit the near-full disk. Export only needs the model;
-# tradeoff is optimizer state isn't resumable on crash (fine for a short stable run).
-CKPT_CONTENTS=${CKPT_CONTENTS:-[model,extra]}
+# FSDP requires full [model,optimizer,extra] checkpoints (~63G each); model-only is rejected by
+# FSDPCheckpointManager. Disk is near-full, so use SAVE_FREQ=10 -> a SINGLE checkpoint at the
+# final step (no two coexisting -> fits in ~77G free). Export reads the model from it.
+# Tradeoff: no mid-run checkpoint, so a crash restarts from step 1 (config is stable -> low risk).
+CKPT_CONTENTS=${CKPT_CONTENTS:-[model,optimizer,extra]}
+SAVE_FREQ=${SAVE_FREQ:-10}
 
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[orch] lock held; exit" >> $LOG; exit 0; fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
@@ -76,6 +78,7 @@ RLLM_AGENTIC_CLAUDE_BIN=$CLAUDE_BIN \
 MAX_RESPONSE=$MAX_RESPONSE PPO_MAX_TOKEN_LEN=$PPO_MAX_TOKEN_LEN \
 GPU_MEM_UTIL=$GPU_MEM_UTIL AGENT_MAX_STEPS=$AGENT_MAX_STEPS \
 TRAJECTORY_TIMEOUT=$TRAJ_TIMEOUT CKPT_CONTENTS=$CKPT_CONTENTS \
+SAVE_FREQ=$SAVE_FREQ \
 REFINE_CACHE=$CACHE"
 
 killminers
