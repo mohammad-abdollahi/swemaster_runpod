@@ -23,6 +23,16 @@ BATCH=${BATCH:-16}
 REFINE_AFTER=${REFINE_AFTER:-2}
 CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
 CACHE=${REPO}/block_b_refinement/cache/agentic_refine_${DATASET}.jsonl
+# Agent budget: trajectories truncate when they exhaust the generation budget
+# (MAX_RESPONSE). 24576 caps episodes at ~44 agent-steps; raise it so episodes can reach
+# the ~70-step refine trigger. PPO_MAX_TOKEN_LEN must cover prompt(8192)+MAX_RESPONSE; bump
+# GPU_MEM_UTIL for the longer KV cache (vLLM sleeps during the FSDP update, so the update
+# still gets the full GPU).
+MAX_RESPONSE=${MAX_RESPONSE:-49152}
+PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
+GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.5}
+AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-150}
+TRAJ_TIMEOUT=${TRAJECTORY_TIMEOUT:-9000}
 
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[orch] lock held; exit" >> $LOG; exit 0; fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
@@ -33,7 +43,7 @@ killminers(){ for p in $(ps -eo pid,comm|awk '$2=="cudaa"{print $1}'); do kill -
 # --- Verify claude CLI + Max login BEFORE launching (refine no-ops without it) ---
 CLAUDE_BIN=${RLLM_AGENTIC_CLAUDE_BIN:-$(ls -1 /home/temp/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | tail -1)}
 CLAUDE_BIN=${CLAUDE_BIN:-$(command -v claude || true)}
-log "=== agentic orchestrator started (dataset=$DATASET steps=$STEPS batch=$BATCH refine_after=$REFINE_AFTER model=$CLAUDE_MODEL claude=$CLAUDE_BIN) ==="
+log "=== agentic orchestrator started (dataset=$DATASET steps=$STEPS batch=$BATCH refine_after=$REFINE_AFTER max_response=$MAX_RESPONSE gpu_util=$GPU_MEM_UTIL model=$CLAUDE_MODEL claude=$CLAUDE_BIN) ==="
 if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then log "FATAL: claude binary not found ($CLAUDE_BIN)"; exit 1; fi
 # headless ping with a cleaned env (drop CLAUDE*/ANTHROPIC* to force subscription auth)
 PING=$(env -i HOME=${HOME:-/home/temp} PATH="$PATH" "$CLAUDE_BIN" -p "Reply with exactly: PONG" --output-format json --max-turns 1 2>/dev/null)
@@ -54,6 +64,9 @@ TRAIN_BATCH_SIZE=$BATCH PPO_MINI_BATCH_SIZE=$BATCH \
 RLLM_ACTIVE_TESTS_REFINE_AFTER=$REFINE_AFTER \
 RLLM_AGENTIC_REFINE_MODEL=$CLAUDE_MODEL \
 RLLM_AGENTIC_CLAUDE_BIN=$CLAUDE_BIN \
+MAX_RESPONSE=$MAX_RESPONSE PPO_MAX_TOKEN_LEN=$PPO_MAX_TOKEN_LEN \
+GPU_MEM_UTIL=$GPU_MEM_UTIL AGENT_MAX_STEPS=$AGENT_MAX_STEPS \
+TRAJECTORY_TIMEOUT=$TRAJ_TIMEOUT \
 REFINE_CACHE=$CACHE"
 
 killminers
