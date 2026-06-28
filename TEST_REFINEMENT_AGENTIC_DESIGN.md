@@ -12,7 +12,7 @@ subscription** (no API charge), instead of a single OpenAI chat call. Deltas:
 | Aspect | OpenAI branch (current) | Agentic branch (this) |
 |---|---|---|
 | Refiner | 1 `chat.completions` call | **`claude -p`** (Claude Code agent) — explores repo, runs the test, self-verifies |
-| Gold patch in prompt | YES | **NO** (removed) |
+| Gold patch in prompt | YES | **YES** (agent sees the fix → targets it directly) |
 | Trajectory input | current env only, 7K-char summary, **inert** (DUMP flag off) | **multiple diverse** trajectories, always-on capture |
 | Trajectory selection | n/a | regex-normalized similarity; include if **>30% mismatch** |
 | F2P guarantee | "currently fails" only (weak; admits NameErrors) | **fail-on-buggy AND pass-on-fixed**, both in clean containers |
@@ -52,19 +52,22 @@ across the rollout group (n=4) and prior steps. The stalled trajectory is always
 
 Result: Claude sees a few *materially different* failure modes, not 4 near-duplicates.
 
-## 4. Prompt (gold patch removed)
+## 4. Prompt (gold patch INCLUDED)
 
-System (gold-fix references removed to match "no gold patch"):
+System:
 > You are a senior Python test engineer helping an RL agent STUCK on a failing pytest test during
-> training. You get the issue, the original hard test, and the agent's trajectories so far. REFINE
-> the test so it is more learnable: REWRITE it as one cleaner test OR SPLIT it into a few smaller
-> minimal tests — each asserting ONE facet, descriptive name, standard pytest only (no
-> network/sleep/randomness/external services). CRITICAL: the refined test(s) must FAIL on the
-> buggy/unfixed code and PASS only once the bug is correctly fixed — never write a test that passes
-> trivially. You may use the provided tools to read the repo and RUN your candidate test (it must
-> currently fail). Return the final refined test(s).
+> training. You get the issue, the gold fix (ground truth of the intended behavior), the original hard
+> test, and the agent's trajectories so far. REFINE the test so it is more learnable: REWRITE it as
+> one cleaner test OR SPLIT it into a few smaller minimal tests — each asserting ONE facet, descriptive
+> name, standard pytest only (no network/sleep/randomness/external services). CRITICAL: the refined
+> test(s) must FAIL on the buggy/unfixed code and PASS only once the correct fix (the gold patch) is
+> applied — never write a test that passes trivially. You may read the repo and RUN your candidate with
+> `./run_test.sh` (buggy checkout; it must currently fail). WRITE the final test(s) to `refined_test.py`.
 
-User body: `## Issue`, `## Original (hard) FAIL_TO_PASS test {test_id}`, `## Agent trajectories (N diverse, it has NOT made this test pass)`. **No gold patch.**
+User body: `## Issue`, `## Gold patch (ground truth)`, `## Original (hard) FAIL_TO_PASS test {test_id}`,
+`## Agent trajectory #N (it has NOT made this test pass)`. **Gold patch included** so the agent can
+target the intended fix; the F2P post-processor still validates independently. Inputs passed verbatim
+(no length caps).
 
 **No input-length conditions.** Unlike the OpenAI branch (which capped issue ≤3500, gold patch ≤7000,
 test ≤3500, trajectory ≤7000 chars, and per-step action/obs to 300/200), this branch passes the issue,
@@ -108,9 +111,9 @@ subprocess.run(
 The refiner returns refined test source; everything downstream (diversity preprocessor, F2P
 post-processor, cache, `_replace_test`) consumes it directly.
 
-## 6. Post-processor — F2P guarantee (gold patch used internally only)
+## 6. Post-processor — F2P guarantee (independent validation)
 
-For each candidate test function, validate in **clean containers** (agent never saw the patch):
+For each candidate test function, validate in **clean containers** (independent of what the agent saw):
 1. **Buggy** (`base_commit`): run → must **FAIL** with a genuine assertion/logic failure.
    Reject if it errors on **collection/import/NameError** (fixes the OpenAI-branch bug where such
    errors were mis-admitted as "fails on buggy").

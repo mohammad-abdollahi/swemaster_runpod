@@ -63,13 +63,14 @@ _MAX_REFINED = int(os.environ.get("RLLM_AGENTIC_REFINE_MAX", "4"))
 
 _SYSTEM = (
     "You are a senior Python test engineer helping a reinforcement-learning agent that is STUCK on a "
-    "failing pytest test during training. You get the issue, the original hard test, and the agent's "
-    "trajectories so far. REFINE the test so it is more learnable: either REWRITE it as one cleaner "
-    "test or SPLIT it into a few smaller minimal tests - each asserting ONE facet, descriptive name, "
-    "standard pytest only (no network/sleep/randomness/external services). CRITICAL: the refined "
-    "test(s) must FAIL on the buggy/unfixed code and PASS only once the bug is correctly fixed - never "
-    "write a test that passes trivially. You may read the repository and RUN your candidate with "
-    "`./run_test.sh` (it runs the test in the buggy checkout; it MUST currently fail). "
+    "failing pytest test during training. You get the issue, the gold fix (ground truth of the "
+    "intended behavior), the original hard test, and the agent's trajectories so far. REFINE the test "
+    "so it is more learnable: either REWRITE it as one cleaner test or SPLIT it into a few smaller "
+    "minimal tests - each asserting ONE facet, descriptive name, standard pytest only "
+    "(no network/sleep/randomness/external services). CRITICAL: the refined test(s) must FAIL on the "
+    "buggy/unfixed code and PASS only once the correct fix (the gold patch) is applied - never write a "
+    "test that passes trivially. You may read the repository and RUN your candidate with `./run_test.sh` "
+    "(it runs the test in the buggy checkout; it MUST currently fail). "
     "When done, WRITE the final refined test(s) to a file named `refined_test.py` in the current "
     "directory - imports at top, one or more `def test_...():` functions, nothing else."
 )
@@ -147,9 +148,11 @@ def _render_trajectory(steps: List[dict]) -> str:
 
 def build_prompt(entry: dict, test_id: str, test_src: str, trajs: List[List[dict]]) -> str:
     issue = entry.get("problem_statement", "") or ""
+    gold = entry.get("patch", "") or ""
     blocks = [
         _SYSTEM,
         "\n## Issue\n" + issue,
+        "\n## Gold patch (the fix that makes the intended behavior correct - ground truth)\n" + gold,
         f"\n## Original (hard) FAIL_TO_PASS test `{test_id}`\n" + (test_src or "(source unavailable)"),
     ]
     for i, t in enumerate(trajs, 1):
