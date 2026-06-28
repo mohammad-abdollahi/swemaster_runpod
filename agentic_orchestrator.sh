@@ -30,7 +30,10 @@ CACHE=${REPO}/block_b_refinement/cache/agentic_refine_${DATASET}.jsonl
 # still gets the full GPU).
 MAX_RESPONSE=${MAX_RESPONSE:-49152}
 PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
-GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.5}
+# Keep the known-good 0.3 (raising to 0.5 crashed vLLM's sleep-mode CuMemAllocator at the
+# rollout->FSDP-update transition: "Trying to free a pointer not allocated here"). The longer
+# KV cache still fits at 0.3 (~5 concurrent 57k-token seqs); rollout is a bit slower, update stable.
+GPU_MEM_UTIL=${GPU_MEM_UTIL:-0.3}
 AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-150}
 TRAJ_TIMEOUT=${TRAJECTORY_TIMEOUT:-9000}
 
