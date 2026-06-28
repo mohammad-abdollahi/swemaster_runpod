@@ -61,6 +61,12 @@ _MISMATCH = float(os.environ.get("RLLM_AGENTIC_TRAJ_DIVERSITY", "0.30"))  # >30%
 _TIMEOUT = int(os.environ.get("RLLM_AGENTIC_REFINE_TIMEOUT", "900"))
 _MAX_REFINED = int(os.environ.get("RLLM_AGENTIC_REFINE_MAX", "4"))
 
+# Global cap on concurrent agentic refines (each one runs claude -p + up to 3 docker
+# containers and blocks a rollout worker ~2-3 min). Keeps a high-concurrency rollout from
+# spawning a swarm of claude sessions / containers at once.
+_MAX_CONCURRENCY = max(1, int(os.environ.get("RLLM_AGENTIC_MAX_CONCURRENCY", "2")))
+_sem = threading.BoundedSemaphore(_MAX_CONCURRENCY)
+
 _SYSTEM = (
     "You are a senior Python test engineer helping a reinforcement-learning agent that is STUCK on a "
     "failing pytest test during training. You get the issue, the gold fix (ground truth of the "
@@ -331,12 +337,23 @@ def _make_buggy_checkout(image: str) -> Optional[Tuple[str, "object"]]:
 def refine_test_agentic(entry: dict, test_id: str, trajectories: List[List[dict]],
                         cache: OnlineRefineCache, model: str = _MODEL,
                         timeout: int = _TIMEOUT) -> List[Tuple[str, str]]:
-    """Agentically refine `test_id`. Returns [(node_id, code)] of F2P-validated refined tests, or []."""
+    """Agentically refine `test_id`. Returns [(node_id, code)] of F2P-validated refined tests, or [].
+    Serialized by a global semaphore (RLLM_AGENTIC_MAX_CONCURRENCY) so a high-concurrency rollout
+    doesn't spawn a swarm of claude sessions / containers at once."""
     iid = entry.get("instance_id", "")
     cached = cache.get(iid, test_id)
     if cached is not None:
         return list(cached.refined)
+    with _sem:
+        cached = cache.get(iid, test_id)  # another worker may have finished while we waited
+        if cached is not None:
+            return list(cached.refined)
+        return _do_refine(entry, test_id, trajectories, cache, model, timeout)
 
+
+def _do_refine(entry: dict, test_id: str, trajectories: List[List[dict]],
+               cache: OnlineRefineCache, model: str, timeout: int) -> List[Tuple[str, str]]:
+    iid = entry.get("instance_id", "")
     o = OnlineRefinement(instance_id=iid, test_id=test_id, model=f"claude-cli:{model}")
     test_src = extract_test_source(entry.get("test_patch", "") or "", test_id) \
         or "(source unavailable - derive from the repo)"
