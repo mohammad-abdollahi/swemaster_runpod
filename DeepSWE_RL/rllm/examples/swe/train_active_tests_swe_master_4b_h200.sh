@@ -183,6 +183,7 @@ exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=${SAVE_FREQ} \
+    actor_rollout_ref.actor.checkpoint.contents=${CKPT_CONTENTS:-[model,optimizer,extra]} \
     trainer.test_freq=${TEST_FREQ} \
     trainer.default_hdfs_dir=null \
     env.name=swe_arsenal \

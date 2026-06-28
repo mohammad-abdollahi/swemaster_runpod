@@ -55,5 +55,6 @@ env \
   RLLM_AGENTIC_REFINE_MAX=${RLLM_ACTIVE_TESTS_REFINE_MAX:-4} \
   RLLM_AGENTIC_TRAJ_DIR=${RLLM_AGENTIC_TRAJ_DIR:-$REPO/block_b_refinement/cache/agentic_traj} \
   SAVE_FREQ=${SAVE_FREQ:-1} TEST_FREQ=${TEST_FREQ:-999} \
+  CKPT_CONTENTS=${CKPT_CONTENTS:-[model,extra]} \
   EXPERIMENT_NAME="$EXP" PROJECT_NAME="$PROJ" \
   bash DeepSWE_RL/rllm/examples/swe/train_active_tests_swe_master_4b_h200.sh
