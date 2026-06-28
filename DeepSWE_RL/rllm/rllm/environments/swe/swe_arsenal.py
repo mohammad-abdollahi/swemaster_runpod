@@ -83,9 +83,11 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         refine_enabled=_env_flag("RLLM_ACTIVE_TESTS_REFINE", "0"),
         refine_after=_env_int("RLLM_ACTIVE_TESTS_REFINE_AFTER", -1),
         refine_max_subtests=_env_int("RLLM_ACTIVE_TESTS_REFINE_MAX", 4),
-        # ONLINE TEST-REPLACING refinement (test-refinement-test-to-openai): when on,
-        # stalled tests are refined live by OpenAI and REPLACE the scored test.
-        refine_replace=_env_flag("RLLM_ACTIVE_TESTS_ONLINE_REFINE", "0"),
+        # TEST-REPLACING refinement: on stall, a stalled test is refined live and REPLACES
+        # the scored test. ONLINE = OpenAI (test-refinement-test-to-openai); AGENTIC = claude -p
+        # Claude Code agent (test-refinement-agentic). Either backend uses _replace_test.
+        refine_replace=(_env_flag("RLLM_ACTIVE_TESTS_ONLINE_REFINE", "0")
+                        or _env_flag("RLLM_ACTIVE_TESTS_AGENTIC_REFINE", "0")),
     )
 
 try:
@@ -205,6 +207,15 @@ class SWEEnv(BaseEnv):
             ),
         )
         self._refine_cache = None
+        # AGENTIC refinement (claude -p Claude Code agent). When on, capture the per-step
+        # transcript always (for the diversity preprocessor) and keep an append-only
+        # per-instance trajectory store so the refiner can pick DIVERSE prior trajectories.
+        self.agentic_refine = _env_flag("RLLM_ACTIVE_TESTS_AGENTIC_REFINE", "0")
+        self.agentic_traj_dir = os.environ.get(
+            "RLLM_AGENTIC_TRAJ_DIR",
+            os.path.join(os.path.dirname(self.refine_cache_path), "agentic_traj"),
+        )
+        self._capture_traj = bool(os.environ.get("RLLM_DUMP_TRAJ_DIR") or self.agentic_refine)
         self.scheduler = None
         self.scheduler_config = None
         self.scheduler_events = []  # diagnostics per scheduler tick
@@ -243,6 +254,50 @@ class SWEEnv(BaseEnv):
         """
         if not instance_id:
             return None
+
+        # ---- AGENTIC test-replacing refinement (claude -p) ----------------
+        # On stall, refine the F2P test with the Claude Code agent (Max subscription),
+        # validate true-F2P in clean buggy+fixed containers, write the validated file into
+        # THIS agent container (so terminal _run_refined_nodes scores it), and REPLACE the
+        # scored test. Gated separately so it takes precedence over the OpenAI branch.
+        if (getattr(self, "scheduler_config", None) is not None
+                and self.scheduler_config.refine_replace
+                and getattr(self, "agentic_refine", False)):
+            try:
+                from r2egym.agenthub.runtime.online_refine import OnlineRefineCache
+                from r2egym.agenthub.runtime.agentic_refine import refine_test_agentic
+                from r2egym.agenthub.runtime.test_refiner import _container_write_file
+            except Exception as e:
+                print(f"!!!!!!! agentic_refine import failed: {e!r}")
+                return None
+            if self._refine_cache is None or not isinstance(self._refine_cache, OnlineRefineCache):
+                self._refine_cache = OnlineRefineCache(self.refine_cache_path)
+            cache = self._refine_cache
+
+            def refine_fn_agentic(test_id):
+                try:
+                    entry = dict(getattr(self.env.runtime, "ds", None) or {})
+                    entry.setdefault("instance_id", instance_id)
+                    rt = self.env.runtime
+                    trajs = self._collect_trajectories(instance_id)
+                    nodes = refine_test_agentic(entry, test_id, trajs, cache)
+                    # write the validated refined file into THIS agent container so the
+                    # terminal ad-hoc run (compute_final_reward) can score it.
+                    rec = cache.get(instance_id, test_id)
+                    if rec and rec.refined and rec.full_code and rt is not None:
+                        try:
+                            _container_write_file(rt, f"/testbed/{rec.test_file}", rec.full_code)
+                        except Exception as e:
+                            print(f"!!!!!!! agentic write-into-agent-container failed: {e!r}")
+                    if nodes:
+                        print(f"!!!!!!! AGENTIC REFINE replaced {test_id} -> "
+                              f"{[n for n, _ in nodes]}")
+                    return nodes or None
+                except Exception as e:
+                    print(f"!!!!!!! agentic refine failed for {test_id}: {e!r}")
+                    return None
+
+            return refine_fn_agentic
 
         # ---- ONLINE test-replacing refinement -----------------------------
         if getattr(self, "scheduler_config", None) is not None and self.scheduler_config.refine_replace:
@@ -503,7 +558,61 @@ class SWEEnv(BaseEnv):
             f"ticks={self.scheduler.total_ticks}"
         )
         self._maybe_dump_trajectory(f2p_map, p2p_map, breakdown.get("frac_solved"))
+        self._append_agentic_traj(self._instance_id() or "unknown")
         return total
+
+    def _agentic_traj_path(self, iid):
+        safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(iid))
+        return os.path.join(self.agentic_traj_dir, f"{safe}.jsonl")
+
+    def _append_agentic_traj(self, iid):
+        """Append this episode's transcript to the per-instance agentic store (capped to the
+        last N) so later stalls can pick DIVERSE prior trajectories. No-op unless agentic
+        refinement is on and a transcript was captured."""
+        if not getattr(self, "agentic_refine", False):
+            return
+        cur = list(getattr(self, "_transcript", []) or [])
+        if not cur:
+            return
+        try:
+            os.makedirs(self.agentic_traj_dir, exist_ok=True)
+            path = self._agentic_traj_path(iid)
+            cap = _env_int("RLLM_AGENTIC_TRAJ_STORE_MAX", 8)
+            lines = []
+            if os.path.exists(path):
+                lines = [l for l in open(path).read().splitlines() if l.strip()]
+            lines.append(json.dumps({"transcript": cur, "n_steps": self.total_steps}))
+            lines = lines[-cap:]
+            tmp = f"{path}.{os.getpid()}.tmp"
+            with open(tmp, "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+            os.replace(tmp, path)
+        except Exception as e:
+            print(f"!!!!!!! agentic traj append failed: {e!r}")
+
+    def _collect_trajectories(self, iid):
+        """Return [current transcript] + stored prior trajectories for this instance. The
+        current (stalled) transcript is FIRST so the refiner seeds diversity selection with it."""
+        trajs = []
+        cur = list(getattr(self, "_transcript", []) or [])
+        if cur:
+            trajs.append(cur)
+        try:
+            path = self._agentic_traj_path(iid)
+            if os.path.exists(path):
+                for line in open(path):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        t = json.loads(line).get("transcript") or []
+                        if t:
+                            trajs.append(t)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return trajs
 
     def _maybe_dump_trajectory(self, f2p_map, p2p_map, frac_solved):
         """When RLLM_DUMP_TRAJ_DIR is set, record this episode's per-test pass maps
@@ -561,10 +670,10 @@ class SWEEnv(BaseEnv):
         obs_str = str(obs)
         self.tokens_used_approx += len(obs_str)
 
-        # Optional compact transcript capture for the test-to-OpenAI refiner.
-        # No-op unless RLLM_DUMP_TRAJ_DIR is set (checked lazily at dump time);
-        # we always append here so the dump has the full trajectory if enabled.
-        if os.environ.get("RLLM_DUMP_TRAJ_DIR"):
+        # Optional compact transcript capture for the test-to-OpenAI / agentic refiners.
+        # On when RLLM_DUMP_TRAJ_DIR is set OR agentic refinement is enabled (the agentic
+        # diversity preprocessor needs the trajectory). Stays empty/zero-cost otherwise.
+        if getattr(self, "_capture_traj", False):
             try:
                 cap = int(os.environ.get("RLLM_DUMP_TRAJ_OBS_CAP", "2000"))
             except ValueError:
