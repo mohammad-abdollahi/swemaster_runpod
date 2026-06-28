@@ -23,12 +23,14 @@ BATCH=${BATCH:-16}
 REFINE_AFTER=${REFINE_AFTER:-2}
 CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
 CACHE=${REPO}/block_b_refinement/cache/agentic_refine_${DATASET}.jsonl
-# Agent budget: trajectories truncate when they exhaust the generation budget
-# (MAX_RESPONSE). 24576 caps episodes at ~44 agent-steps; raise it so episodes can reach
-# the ~70-step refine trigger. PPO_MAX_TOKEN_LEN must cover prompt(8192)+MAX_RESPONSE; bump
-# GPU_MEM_UTIL for the longer KV cache (vLLM sleeps during the FSDP update, so the update
-# still gets the full GPU).
-MAX_RESPONSE=${MAX_RESPONSE:-49152}
+# Agent budget. NOTE: raising MAX_RESPONSE so episodes reach ~step 70 pushes the context to
+# 57344, which CRASHES vLLM's sleep-mode CuMemAllocator at the rollout->FSDP-update transition
+# ("Trying to free a pointer not allocated here") — reproduced at gpu_util 0.5 AND 0.3. The
+# known-good context is <=32768 (MAX_RESPONSE<=24576), where vLLM sleep works and prior runs
+# completed. So keep 24576 (episodes ~44 steps) and fire refine WITHIN budget via REFINE_AFTER
+# (e.g. 6 => ~step 30, a deep stall). Reaching a literal step-70 trigger needs a vLLM-sleep
+# fix (disable sleep in fsdp_vllm.py + ensure update memory fits) — deferred.
+MAX_RESPONSE=${MAX_RESPONSE:-24576}
 PPO_MAX_TOKEN_LEN=${PPO_MAX_TOKEN_LEN:-$((8192 + MAX_RESPONSE))}
 # Keep the known-good 0.3 (raising to 0.5 crashed vLLM's sleep-mode CuMemAllocator at the
 # rollout->FSDP-update transition: "Trying to free a pointer not allocated here"). The longer
