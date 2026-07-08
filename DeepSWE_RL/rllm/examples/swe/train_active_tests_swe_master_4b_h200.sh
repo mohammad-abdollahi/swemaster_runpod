@@ -138,7 +138,7 @@ exec "${PYTHON_BIN}" -m rllm.trainer.verl.train_agent_ppo \
     data.max_prompt_length=8192 \
     data.max_response_length=${MAX_RESPONSE} \
     data.filter_overlong_prompts=True \
-    data.filter_overlong_prompts_workers=32 \
+    data.filter_overlong_prompts_workers=${FILTER_WORKERS:-1} \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     actor_rollout_ref.hybrid_engine=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \

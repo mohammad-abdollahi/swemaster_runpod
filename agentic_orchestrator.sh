@@ -16,7 +16,7 @@ OUTROOT=/home/temp/training_outputs/${PROJ}
 
 DATASET=${DATASET:-swerebench_verified_live}
 COMP=${REPO}/data_examples/rl_data/${DATASET}
-SFT=/home/temp/models/SWE-Master-4B-SFT
+SFT=${BASE_MODEL:-/home/temp/models/SWE-Master-4B-SFT}
 M_FINAL=${M_FINAL:-/home/temp/models/SWE-Master-4B-Agentic-refine}
 STEPS=${STEPS:-10}
 BATCH=${BATCH:-16}
@@ -67,7 +67,7 @@ OD(){ ls -dt ${OUTROOT}/${1}*/ 2>/dev/null | head -1; }
 prune(){ ls -d ${1}global_step_*/ 2>/dev/null | sort -V | head -n -2 | xargs -r rm -rf; }
 alive(){ pgrep -f 'rllm.trainer.verl.train_agent_ppo' >/dev/null 2>&1; }
 
-EXP=agentic
+EXP=${EXP:-agentic}
 ALOG=/home/temp/arm_agentic.log
 RENV="BASE_MODEL=$SFT \
 TRAIN_PARQUET=$COMP/train_00000_verl.parquet \
