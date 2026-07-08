@@ -16,7 +16,11 @@ set -e
 
 EXP_DIR=${1:-$(ls -d /home/temp/training_outputs/active_tests_paper150/*/ 2>/dev/null | tail -1)}
 TARGET_DIR=${2:-/home/temp/models/SWE-Master-4B-ATS-RL}
-MERGER=/home/temp/swemaster_runpod/DeepSWE_RL/rllm/verl/scripts/model_merger.py
+# Repo-relative so this works regardless of where the repo is checked out
+# (8xH100 box, etc.). Falls back to the venv python on the original machine.
+_EXPORT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MERGER=${MERGER:-${_EXPORT_SCRIPT_DIR}/DeepSWE_RL/rllm/verl/scripts/model_merger.py}
+PYTHON_BIN=${PYTHON_BIN:-$([ -x /home/temp/venv/bin/python ] && echo /home/temp/venv/bin/python || echo python3)}
 
 if [ -z "$EXP_DIR" ] || [ ! -d "$EXP_DIR" ]; then
   echo "ERROR: experiment dir not found: $EXP_DIR"; exit 1
@@ -31,7 +35,10 @@ CKPT=""
 for d in $(ls -d "${EXP_DIR}"global_step_*/ 2>/dev/null | sort -V -r); do
   # Require BOTH the FSDP shard AND config.json — config.json is written last,
   # so its presence is the green light that the checkpoint is complete.
-  if [ -f "${d}actor/model_world_size_1_rank_0.pt" ] && [ -f "${d}actor/config.json" ]; then
+  # Accept ANY FSDP world size: single-GPU writes model_world_size_1_rank_0.pt,
+  # an 8-GPU run writes model_world_size_8_rank_0.pt. config.json is written
+  # last, so its presence marks a complete checkpoint.
+  if ls "${d}actor/"model_world_size_*_rank_0.pt >/dev/null 2>&1 && [ -f "${d}actor/config.json" ]; then
     CKPT="$d"; break
   fi
 done
@@ -46,7 +53,7 @@ echo "Actor dir:         $ACTOR_DIR"
 echo "Target HF dir:     $TARGET_DIR"
 
 mkdir -p "$TARGET_DIR"
-/home/temp/venv/bin/python "$MERGER" merge \
+"${PYTHON_BIN}" "$MERGER" merge \
   --backend fsdp \
   --local_dir "$ACTOR_DIR" \
   --target_dir "$TARGET_DIR"
