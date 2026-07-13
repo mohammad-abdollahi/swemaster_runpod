@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 import uuid
@@ -136,32 +137,37 @@ class PipelineAgentPPOTrainer(AgentPPOTrainer):
 
                 with Timer("step", timing_raw):
 
+                    thread_exception = [None]  # mutable container to capture exception in thread
                     def create_replay_queue(generator, q, batch_iter_val, timing_raw_val):
-                        uid_to_trajectories = {}  # mapping of environment id (uid) to trajectories. Only put to queue in groups of size self.config.actor_rollout_ref.rollout.n
-                        with Timer("gen", timing_raw_val):
-                            for _, trajectory in enumerate(generator):
-                                # For example, idx=(0,1,2,3), (4,5,6,7) for pass of N=4 belong to the same sample.
-                                uid = trajectory["idx"] // self.config.actor_rollout_ref.rollout.n
-                                if uid not in uid_to_trajectories:
-                                    uid_to_trajectories[uid] = []
-                                uid_to_trajectories[uid].append(trajectory)
-                                if len(uid_to_trajectories[uid]) == self.config.actor_rollout_ref.rollout.n:
-                                    q.put((batch_iter_val, uid_to_trajectories[uid]))
-                                    del uid_to_trajectories[uid]  # so even if there is replicas it's still grouped correctly
+                        try:
+                            uid_to_trajectories = {}
+                            with Timer("gen", timing_raw_val):
+                                for _, trajectory in enumerate(generator):
+                                    uid = trajectory["idx"] // self.config.actor_rollout_ref.rollout.n
+                                    if uid not in uid_to_trajectories:
+                                        uid_to_trajectories[uid] = []
+                                    uid_to_trajectories[uid].append(trajectory)
+                                    if len(uid_to_trajectories[uid]) == self.config.actor_rollout_ref.rollout.n:
+                                        q.put((batch_iter_val, uid_to_trajectories[uid]))
+                                        del uid_to_trajectories[uid]
+                        except Exception as e:
+                            thread_exception[0] = e
+                            print(f"\n[ERROR] Trajectory generation thread crashed:", flush=True)
+                            print(f"  {type(e).__name__}: {e}", flush=True)
+                            import traceback
+                            traceback.print_exc()
 
-                    # Get the generator function which will yield results as they complete
                     if self.config.agent.step_advantage_broadcast:
                         raise Exception("Stepwise advantage broadcasting not supported on pipelined trainer yet")
                     gen_seq_generator = self.generate_agent_trajectories_async(timing_raw=timing_raw, meta_info=batch.meta_info)
-                    thread = threading.Thread(target=create_replay_queue, args=(gen_seq_generator, replay_queue, batch_iter, timing_raw))
+                    thread = threading.Thread(target=create_replay_queue, args=(gen_seq_generator, replay_queue, batch_iter, timing_raw), daemon=False)
                     thread.start()
 
                     ppo_train_batch_size = self.config.data.train_batch_size
                     ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
                     assert ppo_train_batch_size % ppo_mini_batch_size == 0, "PPO mini batch size must be a divisor of the total training batch size"
                     ppo_step_minibatch_iter = ppo_train_batch_size // ppo_mini_batch_size
-                    num_loops = ppo_step_minibatch_iter  # ppo_step_minibatch_iter +1 if batch_iter > 0 else  ppo_step_minibatch_iter
-                    # Initialize Empty data proto
+                    num_loops = ppo_step_minibatch_iter
                     training_batch = []
                     for mini_batch_iter in range(num_loops):
                         print(f"mini_batch_iter: {mini_batch_iter + 1} / {num_loops}", flush=True)
@@ -169,9 +175,21 @@ class PipelineAgentPPOTrainer(AgentPPOTrainer):
                         start_time = time.perf_counter()
                         with Timer("pipeline_gen", timing_raw):
                             trajectories = []
-                            for _ in range(ppo_mini_batch_size):
-                                _, trajes = replay_queue.get()
-                                trajectories.extend(trajes)
+                            try:
+                                for i in range(ppo_mini_batch_size):
+                                    if thread_exception[0]:
+                                        raise RuntimeError(f"Trajectory thread failed: {thread_exception[0]}")
+                                    try:
+                                        _, trajes = replay_queue.get(timeout=300)  # 5min timeout
+                                        trajectories.extend(trajes)
+                                    except queue.Empty:
+                                        if not thread.is_alive():
+                                            raise RuntimeError(f"Trajectory thread died. Exception: {thread_exception[0]}")
+                                        raise RuntimeError(f"Queue timeout {300}s (thread alive but stuck)")
+                            except RuntimeError as e:
+                                print(f"\n[BATCH SKIP] Trajectory generation failed, skipping batch:", flush=True)
+                                print(f"  {e}", flush=True)
+                                break  # Skip this batch
                             mini_batch = self._transform_agent_trajectories(trajectories=trajectories)
                             ids2uids = [traj["idx"] // self.config.actor_rollout_ref.rollout.n for traj in trajectories]
                             mini_batch.non_tensor_batch["uid"] = np.array(ids2uids, dtype=object)
@@ -229,20 +247,27 @@ class PipelineAgentPPOTrainer(AgentPPOTrainer):
                             mini_batch = compute_advantage(mini_batch, adv_estimator=self.config.algorithm.adv_estimator, gamma=self.config.algorithm.gamma, lam=self.config.algorithm.lam, mask_truncated_samples=self.config.algorithm.mask_truncated_samples, clip_advantages=self.config.algorithm.clip_advantages)
 
                         self._balance_batch(mini_batch, metrics=mini_batch_metrics)
-                        # compute global_valid tokens
                         mini_batch.meta_info["global_token_num"] = torch.sum(mini_batch.batch["attention_mask"], dim=-1).tolist()
-                        # update actor
+                        # update actor (backpropagation — most likely crash point)
                         start_time = time.perf_counter()
+                        print(f"[Step {self.global_steps}] Actor backprop: batch_size={mini_batch.batch['input_ids'].shape[0]}", flush=True)
 
-                        with Timer("update_actor", timing_raw):
-                            actor_output = self.actor_wg.update_actor_mini_batch(mini_batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
-                        end_time = time.perf_counter()
-                        print(f"Actor update took {end_time - start_time:.2f} seconds", flush=True)
-                        mini_batch_metrics.update(actor_output_metrics)
-                        training_batch.append(mini_batch)
-                        update_metrics(metrics, mini_batch_metrics)
-                        total_mini_batch_iters += 1
+                        try:
+                            with Timer("update_actor", timing_raw):
+                                actor_output = self.actor_wg.update_actor_mini_batch(mini_batch)
+                            actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                            end_time = time.perf_counter()
+                            print(f"[Step {self.global_steps}] Actor update OK ({end_time - start_time:.2f}s)", flush=True)
+                            mini_batch_metrics.update(actor_output_metrics)
+                            training_batch.append(mini_batch)
+                            update_metrics(metrics, mini_batch_metrics)
+                            total_mini_batch_iters += 1
+                        except Exception as e:
+                            print(f"\n[ERROR] Actor backprop failed:", flush=True)
+                            print(f"  {type(e).__name__}: {e}", flush=True)
+                            import traceback
+                            traceback.print_exc()
+                            print(f"[SKIP] Skipping this mini-batch and continuing to next\n", flush=True)
 
                     # last_iter_mini_batch_iter = (mini_batch_iter + last_iter_mini_batch_iter - 1) % ppo_step_minibatch_iter
                     with Timer("rollout_model_update", timing_raw):
