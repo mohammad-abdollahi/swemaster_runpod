@@ -163,9 +163,7 @@ test_src = _extract_test_function_only(test_src, test_id)
 **TIER 1 Total**: 
 - Trajectories removed from prompt (file refs only): 300-1500 tokens saved
 - Gold patch removed entirely: 1000-3000 tokens saved
-- Issue core extraction: 200-500 tokens saved
-- Test function extraction: 100-300 tokens saved
-- **Total: 1600-5300 tokens per call → ~1200 tokens remaining = 70-85% reduction**
+- **Total: 1300-4500 tokens per call = 60-75% reduction**
 
 ---
 
@@ -204,7 +202,7 @@ def validate_f2p(entry, pairs, full_code, ...):
 
 ## Recommended Implementation Plan
 
-### Phase 1: TIER 1 Content Trimming (1-2 hours, 70-85% token reduction)
+### Phase 1: TIER 1 Content Trimming (30 min, 60-75% token reduction)
 1. **Trajectory File References** (instead of inline)
    - Write trajectories to `trajectory_1.jsonl`, `trajectory_2.jsonl`, etc. in work directory
    - Pass file references in prompt (not the trajectory data)
@@ -216,15 +214,7 @@ def validate_f2p(entry, pairs, full_code, ...):
    - Agent will explore repo files directly and understand the fix
    - Result: 1000-3000 tokens saved per call
 
-3. **Issue Core Extraction**
-   - Add `_extract_issue_core()` to trim problem statement (keep first + last N lines)
-   - Result: 200-500 tokens saved per call
-
-4. **Test Function Extraction**
-   - Add `_extract_test_function_only()` to extract just the test function
-   - Result: 100-300 tokens saved per call
-
-**Total TIER 1**: 1600-5300 tokens saved per call (70-85% reduction)
+**Total TIER 1**: 1300-4500 tokens saved per call (60-75% reduction)
 
 ### Phase 2: TIER 3 Validation Optimization (30 min, wall-clock improvement)
 1. **Quick Syntax Check Before Docker**
@@ -243,15 +233,13 @@ No configuration changes required. All improvements are code-level in `agentic_r
 
 | Approach | Tokens Saved | Implementation | Impact |
 |----------|--------------|-----------------|--------|
-| **TIER 1.1** (trajectory file refs) | 300-1500 / call | 30 min | Remove trajectories from prompt |
-| **TIER 1.2** (remove patch) | 1000-3000 / call | 15 min | Agent explores repo directly |
-| **TIER 1.3** (issue core extract) | 200-500 / call | 20 min | Trim problem statement |
-| **TIER 1.4** (test function only) | 100-300 / call | 20 min | Extract test function |
+| **TIER 1.1** (trajectory file refs) | 300-1500 / call | 20 min | Remove trajectories from prompt |
+| **TIER 1.2** (remove patch) | 1000-3000 / call | 10 min | Agent explores repo directly |
 | **TIER 3.1** (syntax check) | N/A tokens | 20 min | -60-90 sec per call wall-clock |
 
-**Combined TIER 1**: 1600-5300 tokens saved per call = **70-85% reduction in prompt size**
+**Combined TIER 1**: 1300-4500 tokens saved per call = **60-75% reduction in prompt size**
 
-**Combined TIER 1+3**: 70-85% token reduction + faster validation (skip Docker for broken tests)
+**Combined TIER 1+3**: 60-75% token reduction + faster validation (skip Docker for broken tests)
 
 ---
 
