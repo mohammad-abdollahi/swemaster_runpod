@@ -70,30 +70,28 @@ def build_prompt(entry, test_id, test_src, trajs):
 
 **Problem**: Full trajectory (100-500 tokens) × 3 = 300-1500 tokens inlined in prompt
 
-**Solution**: Write trajectories to disk files, pass file paths to agent instead
+**Solution**: Trajectories already saved in JSONL (from `_collect_trajectories()` → `_agentic_traj_path(iid)`). Just reference them by path, don't embed.
 ```python
-def build_prompt(entry, test_id, test_src, trajs, work_dir: str):
-    """Build prompt, write trajectories to disk for agent to read."""
+def build_prompt(entry, test_id, test_src, trajs, work_dir: str, traj_file_path: str = None):
+    """Build prompt, reference trajectory file instead of embedding it."""
     blocks = [_SYSTEM, ...]
     
-    # Write trajectories to files, reference by path
-    traj_refs = []
-    for i, t in enumerate(trajs, 1):
-        traj_file = os.path.join(work_dir, f"trajectory_{i}.jsonl")
-        with open(traj_file, "w") as f:
-            for step in t:
-                f.write(json.dumps(step) + "\n")
-        traj_refs.append(f"  trajectory_{i}.jsonl (in current directory)")
-    
-    if traj_refs:
-        blocks.append("\n## Agent trajectories (read from files)\n" + 
-                     "The following trajectory files are available for you to read:\n" +
-                     "\n".join(traj_refs))
+    # Don't inline trajectories - just reference the file
+    if traj_file_path and os.path.exists(traj_file_path):
+        blocks.append("\n## Agent trajectories (read from file)\n" + 
+                     f"Trajectories available in: {os.path.basename(traj_file_path)}\n" +
+                     "You can read them with: cat trajectories.jsonl")
     
     return "\n".join(blocks)
+
+# In refine_test_agentic, pass the existing trajectory file path:
+traj_path = self._agentic_traj_path(iid)  # Already exists from _collect_trajectories
+prompt = build_prompt(entry, test_id, test_src, trajs, work_dir, traj_path)
+# Copy/symlink existing trajectory file to work directory
+os.link(traj_path, os.path.join(work_dir, "trajectories.jsonl"))
 ```
 
-**Outcome**: Agent can `cat trajectory_1.jsonl` to read trajectories on demand, but prompt doesn't embed them
+**Outcome**: Agent reads `trajectories.jsonl` from disk (already exists), prompt doesn't embed them
 **Savings**: 300-1500 tokens per call (trajectories now 0 tokens in prompt)
 
 #### 1.2 Problem Statement Summarization
