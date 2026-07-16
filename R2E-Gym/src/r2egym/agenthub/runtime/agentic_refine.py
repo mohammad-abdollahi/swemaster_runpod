@@ -152,17 +152,21 @@ def _render_trajectory(steps: List[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(entry: dict, test_id: str, test_src: str, trajs: List[List[dict]]) -> str:
+def build_prompt(entry: dict, test_id: str, test_src: str, trajs: List[List[dict]], traj_file: Optional[str] = None) -> str:
     issue = entry.get("problem_statement", "") or ""
-    gold = entry.get("patch", "") or ""
     blocks = [
         _SYSTEM,
         "\n## Issue\n" + issue,
-        "\n## Gold patch (the fix that makes the intended behavior correct - ground truth)\n" + gold,
         f"\n## Original (hard) FAIL_TO_PASS test `{test_id}`\n" + (test_src or "(source unavailable)"),
     ]
-    for i, t in enumerate(trajs, 1):
-        blocks.append(f"\n## Agent trajectory #{i} (it has NOT made this test pass)\n" + _render_trajectory(t))
+    # Reference trajectory file instead of embedding trajectories
+    if traj_file and os.path.exists(traj_file):
+        blocks.append(f"\n## Agent trajectories (prior attempts)\n" +
+                     f"Read the trajectories from the file `trajectories.jsonl` in this directory.\n" +
+                     f"Each line is a JSON object with the agent's step-by-step actions and observations.")
+    elif trajs:
+        blocks.append(f"\n## Agent trajectories (prior attempts)\n" +
+                     f"No trajectory file found, but you can explore the repository to understand how tests behave.")
     return "\n".join(blocks)
 
 
@@ -257,16 +261,42 @@ def _apply_gold_patch(rt: "_DockerRT", patch: str) -> bool:
     return False
 
 
+def _quick_syntax_check(code: str) -> bool:
+    """Quick pre-check: can the code parse? Returns True if syntactically valid."""
+    try:
+        compile(code, "<string>", "exec")
+        return True
+    except SyntaxError:
+        return False
+
+
 def validate_f2p(entry: dict, pairs: List[Tuple[str, str]], full_code: str, test_file: str,
                  timeout: int = 300) -> List[Tuple[str, str]]:
     """Keep only functions that FAIL on the buggy image AND PASS on the gold-patched image.
-    Requiring pass-on-fixed automatically rejects dead (import/NameError) tests."""
+    Requiring pass-on-fixed automatically rejects dead (import/NameError) tests.
+    Pre-filters with syntax check to skip Docker validation for syntactically invalid tests."""
     image = entry.get("docker_image") or entry.get("image_name")
     patch = entry.get("patch", "") or ""
     if not image:
         print("!!!!!!! agentic_refine: no docker_image; cannot validate F2P")
         return []
+
+    # Pre-filter with syntax check (instant, no Docker)
     names = [n for n, _ in pairs]
+    valid_names = []
+    for name in names:
+        # Extract just this function from full_code for syntax check
+        try:
+            compile(full_code, "<string>", "exec")
+            valid_names.append(name)
+        except SyntaxError as e:
+            print(f"!!!!!!! agentic_refine: {name} has syntax error: {e}")
+
+    if not valid_names:
+        print(f"!!!!!!! agentic_refine: no syntactically valid tests found; skipping Docker validation")
+        return []
+
+    names = valid_names
     buggy = fixed = None
     try:
         buggy = _start_container(image)
@@ -359,13 +389,43 @@ def _do_refine(entry: dict, test_id: str, trajectories: List[List[dict]],
         or "(source unavailable - derive from the repo)"
     trajs = select_diverse_trajectories(
         trajectories[0] if trajectories else [], trajectories or [])
-    prompt = build_prompt(entry, test_id, test_src, trajs)
+
+    # Determine trajectory file path (if it exists)
+    # Reconstruct path same way as swe_arsenal._agentic_traj_path
+    traj_dir = os.environ.get("RLLM_AGENTIC_TRAJ_DIR", "")
+    if not traj_dir:
+        # Fallback: use refine cache directory parent + agentic_traj subdir
+        cache_path = os.environ.get("RLLM_ACTIVE_TESTS_REFINE_CACHE", "")
+        if cache_path:
+            traj_dir = os.path.join(os.path.dirname(cache_path), "agentic_traj")
+
+    traj_file = None
+    if traj_dir:
+        safe_iid = re.sub(r"[^A-Za-z0-9_.-]", "_", iid)[:80]
+        traj_file = os.path.join(traj_dir, f"{safe_iid}.jsonl")
+        if not os.path.exists(traj_file):
+            traj_file = None
+
+    prompt = build_prompt(entry, test_id, test_src, trajs, traj_file=traj_file)
 
     image = entry.get("docker_image") or entry.get("image_name")
     chk = _make_buggy_checkout(image) if image else None
     if chk is None:
         o.error = "no buggy checkout"; cache.put(o); return []
     work, container = chk
+
+    # Copy trajectory file to work directory if it exists
+    if traj_file and os.path.exists(traj_file):
+        try:
+            dest_traj = os.path.join(work, "trajectories.jsonl")
+            # Use hard link if possible, fall back to copy
+            try:
+                os.link(traj_file, dest_traj)
+            except (OSError, NotImplementedError):
+                shutil.copy(traj_file, dest_traj)
+        except Exception as e:
+            print(f"!!!!!!! agentic_refine: failed to copy trajectory file: {e!r}")
+
     try:
         run_claude_p(prompt, cwd=work, model=model, timeout=timeout)
         refined_path = os.path.join(work, "refined_test.py")
