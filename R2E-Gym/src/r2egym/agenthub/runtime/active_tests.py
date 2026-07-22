@@ -82,6 +82,13 @@ class SchedulerConfig:
     # legacy prompt-only behavior (B1/B3) is kept: refine_fn returns [(name, code)]
     # rendered as guidance, never scored.
     refine_replace: bool = False
+    # ADDITIVE refinement: when True (and refine_replace), the ORIGINAL stalled
+    # test is KEPT in fail_to_pass alongside the validated refined nodes, so the
+    # reward requires passing BOTH the original test AND the refined test(s) —
+    # refinement can only enrich/harden the signal, never replace/weaken it.
+    # When False (default), the original is dropped and the refined nodes replace
+    # it (legacy behavior).
+    refine_keep_original: bool = False
 
     def __post_init__(self) -> None:
         if self.k_steps <= 0:
@@ -199,13 +206,17 @@ class ActiveTestScheduler:
         new_pairs = [(n, c) for (n, c) in new_pairs if n][: self.config.refine_max_subtests]
         if not new_pairs:
             return 0
-        # drop the original from every bucket + the scored set
-        self.active.pop(old, None)
-        if old in self.pool:
-            self.pool.remove(old)
-        self.cooldown.pop(old, None)
-        if old in self.fail_to_pass:
-            self.fail_to_pass = [t for t in self.fail_to_pass if t != old]
+        if not self.config.refine_keep_original:
+            # REPLACE (legacy): drop the original from every bucket + the scored set.
+            self.active.pop(old, None)
+            if old in self.pool:
+                self.pool.remove(old)
+            self.cooldown.pop(old, None)
+            if old in self.fail_to_pass:
+                self.fail_to_pass = [t for t in self.fail_to_pass if t != old]
+        # else ADDITIVE: leave `old` in fail_to_pass (scored by /run_tests.sh as
+        # usual) and just append the validated refined nodes below, so the reward
+        # requires BOTH the original and the refined tests.
         # add refined nodes as fresh ACTIVE, scored tests
         for node, code in new_pairs:
             if node not in self.fail_to_pass:

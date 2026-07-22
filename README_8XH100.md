@@ -89,6 +89,7 @@ On completion the orchestrator merges the final checkpoint to `M_FINAL`.
 | `RLLM_MAX_ROLLOUT_CONCURRENCY` | 32 | Concurrent envs/containers. Scale to your CPU/RAM. |
 | `REFINE_MODE` | agentic | `none` = baseline ATS-RL; `agentic` = `claude -p` refine; `online` = OpenAI. |
 | `RLLM_ACTIVE_TESTS_REFINE_AFTER` | 6 | Ticks-stalled before a test is refined (agentic/online). |
+| `RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL` | 1 (agentic) | **Additive refinement**: keep the original test scored *alongside* the validated refined tests (reward needs BOTH). `=0` = legacy behavior where the refined test *replaces* the original in the scored set. |
 | `RAY_NUM_CPUS` / `RAY_OBJECT_STORE` | `nproc` / 64G | Ray head resources. |
 | `MODEL_PATH`,`TRAIN_PARQUET`,`VAL_PARQUET`,`REPO_DIR`,`PYTHON_BIN`,`M_FINAL` | see above | Per-machine paths. |
 

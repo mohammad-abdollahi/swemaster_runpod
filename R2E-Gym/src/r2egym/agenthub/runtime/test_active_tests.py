@@ -416,6 +416,32 @@ def test_reward_stream_identical_refine_on_vs_off():
     assert ro == rn and bro == brn
 
 
+def test_replace_test_drops_original_by_default():
+    """Legacy replace: the original stalled test leaves the scored set."""
+    s = _make(["t0", "t1"], refine_replace=True)
+    pairs = [("refined_test.py::r1", "def r1(): pass"),
+             ("refined_test.py::r2", "def r2(): pass")]
+    added = s._replace_test("t0", pairs)
+    assert added == 2
+    assert "t0" not in s.fail_to_pass                      # original dropped
+    assert {"refined_test.py::r1", "refined_test.py::r2"}.issubset(set(s.fail_to_pass))
+    assert s.refined_nodes == {"refined_test.py::r1", "refined_test.py::r2"}
+
+
+def test_replace_test_keep_original_is_additive():
+    """Additive: the original stays scored AND the refined nodes are added, so the
+    reward requires passing both."""
+    s = _make(["t0", "t1"], refine_replace=True, refine_keep_original=True)
+    pairs = [("refined_test.py::r1", "def r1(): pass"),
+             ("refined_test.py::r2", "def r2(): pass")]
+    added = s._replace_test("t0", pairs)
+    assert added == 2
+    assert "t0" in s.fail_to_pass                          # original KEPT
+    assert {"refined_test.py::r1", "refined_test.py::r2"}.issubset(set(s.fail_to_pass))
+    # original is NOT a refined node (env scores it via /run_tests.sh, not ad-hoc)
+    assert "t0" not in s.refined_nodes
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

@@ -88,6 +88,9 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         # Claude Code agent (test-refinement-agentic). Either backend uses _replace_test.
         refine_replace=(_env_flag("RLLM_ACTIVE_TESTS_ONLINE_REFINE", "0")
                         or _env_flag("RLLM_ACTIVE_TESTS_AGENTIC_REFINE", "0")),
+        # ADDITIVE refinement: keep the ORIGINAL test scored alongside the refined
+        # nodes (reward needs BOTH). Default off = legacy replace behavior.
+        refine_keep_original=_env_flag("RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL", "0"),
     )
 
 try:
