@@ -40,10 +40,14 @@ case "${REFINE_MODE}" in
     export RLLM_ACTIVE_TESTS_AGENTIC_REFINE=1
     export RLLM_ACTIVE_TESTS_REFINE_AFTER=${RLLM_ACTIVE_TESTS_REFINE_AFTER:-6}
     export RLLM_ACTIVE_TESTS_REFINE_MAX=${RLLM_ACTIVE_TESTS_REFINE_MAX:-4}
-    # ADDITIVE: keep the ORIGINAL test scored alongside the refined tests (reward
-    # needs BOTH). Refinement enriches/hardens the signal, never replaces the real
-    # test. Set =0 to get the legacy replace-the-original behavior.
-    export RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL=${RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL:-1}
+    # _replace_test SWITCH (default OFF): the agentic refiner works by REPLACING the
+    # scored test with its refined version. Off => _replace_test is never invoked and
+    # the scored reward stays on the ORIGINAL benchmark tests (this mode == baseline).
+    # Set RLLM_ACTIVE_TESTS_REFINE_REPLACE=1 to actually enable the refining-and-
+    # replacing behavior. RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL=1 (only relevant when
+    # replace=1) keeps the original scored alongside the refined test (additive).
+    export RLLM_ACTIVE_TESTS_REFINE_REPLACE=${RLLM_ACTIVE_TESTS_REFINE_REPLACE:-0}
+    export RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL=${RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL:-0}
     export RLLM_AGENTIC_REFINE_MODEL=${RLLM_AGENTIC_REFINE_MODEL:-claude-sonnet-4-6}
     export RLLM_AGENTIC_MAX_TRAJ=${RLLM_AGENTIC_MAX_TRAJ:-3}
     export RLLM_AGENTIC_TRAJ_DIVERSITY=${RLLM_AGENTIC_TRAJ_DIVERSITY:-0.30}

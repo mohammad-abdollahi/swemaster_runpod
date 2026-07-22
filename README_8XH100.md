@@ -88,8 +88,9 @@ On completion the orchestrator merges the final checkpoint to `M_FINAL`.
 | `TOTAL_EPOCHS` | 40 | Epoch bound if `TOTAL_TRAINING_STEPS` unset. |
 | `RLLM_MAX_ROLLOUT_CONCURRENCY` | 32 | Concurrent envs/containers. Scale to your CPU/RAM. |
 | `REFINE_MODE` | agentic | `none` = baseline ATS-RL; `agentic` = `claude -p` refine; `online` = OpenAI. |
-| `RLLM_ACTIVE_TESTS_REFINE_AFTER` | 6 | Ticks-stalled before a test is refined (agentic/online). |
-| `RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL` | 1 (agentic) | **Additive refinement**: keep the original test scored *alongside* the validated refined tests (reward needs BOTH). `=0` = legacy behavior where the refined test *replaces* the original in the scored set. |
+| `RLLM_ACTIVE_TESTS_REFINE_AFTER` | 6 | Ticks-stalled before a test is refined (only matters when replace is on). |
+| `RLLM_ACTIVE_TESTS_REFINE_REPLACE` | **0** | Master switch for the refine-and-replace behavior (`_replace_test`). **Off by default** → the refined test never enters the scored set; reward stays on the ORIGINAL benchmark tests (== baseline). `=1` enables the agentic refiner to replace the stalled scored test with its refined version. |
+| `RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL` | 0 | Only when replace=1: keep the original test scored *alongside* the refined test (additive; reward needs BOTH) instead of dropping it. |
 | `RAY_NUM_CPUS` / `RAY_OBJECT_STORE` | `nproc` / 64G | Ray head resources. |
 | `MODEL_PATH`,`TRAIN_PARQUET`,`VAL_PARQUET`,`REPO_DIR`,`PYTHON_BIN`,`M_FINAL` | see above | Per-machine paths. |
 

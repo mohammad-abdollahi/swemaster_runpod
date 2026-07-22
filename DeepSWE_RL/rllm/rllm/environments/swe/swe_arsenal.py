@@ -83,13 +83,15 @@ def _scheduler_config_from_env() -> "SchedulerConfig":
         refine_enabled=_env_flag("RLLM_ACTIVE_TESTS_REFINE", "0"),
         refine_after=_env_int("RLLM_ACTIVE_TESTS_REFINE_AFTER", -1),
         refine_max_subtests=_env_int("RLLM_ACTIVE_TESTS_REFINE_MAX", 4),
-        # TEST-REPLACING refinement: on stall, a stalled test is refined live and REPLACES
-        # the scored test. ONLINE = OpenAI (test-refinement-test-to-openai); AGENTIC = claude -p
-        # Claude Code agent (test-refinement-agentic). Either backend uses _replace_test.
-        refine_replace=(_env_flag("RLLM_ACTIVE_TESTS_ONLINE_REFINE", "0")
-                        or _env_flag("RLLM_ACTIVE_TESTS_AGENTIC_REFINE", "0")),
-        # ADDITIVE refinement: keep the ORIGINAL test scored alongside the refined
-        # nodes (reward needs BOTH). Default off = legacy replace behavior.
+        # TEST-REPLACING refinement (_replace_test): swap the refined test into the scored
+        # FAIL_TO_PASS set. This is now EXPLICIT OPT-IN and OFF by default — set
+        # RLLM_ACTIVE_TESTS_REFINE_REPLACE=1 to enable it. When off (default), agentic /
+        # online refinement is PROMPT-ONLY: the refined test is shown to the policy as
+        # guidance for the stalled test, and the ORIGINAL benchmark tests remain the scored
+        # reward (never replaced). This is the default for the train-8-gpus pipeline.
+        refine_replace=_env_flag("RLLM_ACTIVE_TESTS_REFINE_REPLACE", "0"),
+        # ADDITIVE refinement (only relevant when refine_replace=1): keep the ORIGINAL test
+        # scored alongside the refined nodes (reward needs BOTH). Off => refined replaces it.
         refine_keep_original=_env_flag("RLLM_ACTIVE_TESTS_REFINE_KEEP_ORIGINAL", "0"),
     )
 
