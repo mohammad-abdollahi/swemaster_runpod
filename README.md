@@ -1,371 +1,238 @@
+<h1 align="center">Adaptive Test Selection and Refinement for Reinforcement Learning in Program Repair and Unit Test Generation</h1>
 
-<h1 align="center">SWE-Master: Unleashing the Potential of Software Engineering Agents via Post-Training</h1>
+<p align="center"><i>Anonymous artifact for double-blind review.</i></p>
 
+This repository contains the code for the repository-level program repair experiments in the paper. It trains a 4B-parameter software engineering agent with reinforcement learning, replacing the usual binary pass/fail reward with an adaptive verification signal:
 
-<div align="center">
-<a href="./LICENSE"><img src="https://img.shields.io/badge/Code_License-MIT-blue" alt="license"></a>
-<a href="./LICENSE"><img src="https://img.shields.io/badge/Model_License-MIT-blue" alt="license"></a>
-<a href="https://huggingface.co/"><img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-blue?color=8A2BE2"></a>
-<a href="https://arxiv.org/pdf/2602.03411" target="_blank"><img src=https://img.shields.io/badge/arXiv-b5212f.svg?logo=arxiv></a>
-</div>
+1. **Dense test-level reward.** Partial credit for the fraction of target (fail-to-pass) tests a patch resolves, minus a penalty for broken regression (pass-to-pass) tests and a capped penalty for token consumption.
+2. **Policy-conditioned test selection.** Each training instance keeps its target tests in *active*, *pool*, and *cooldown* states. Passed tests cool down and are re-checked; a stalled active set is expanded from the pool.
+3. **Dynamic test refinement.** Tests the policy repeatedly fails are rewritten or decomposed by an LLM-based refiner. A refined test is accepted only if it fails on the buggy repository and passes once the reference patch is applied.
 
+The implementation builds on the public SWE-Master RL pipeline (reference [3] in the paper) and its underlying open-source frameworks. The model initialization, optimizer, agent scaffold, tools, and verifier execution pipeline are inherited from that baseline; the changes in this repository are on the reward and verification side.
 
+## Results reported in the paper
 
+Held-out evaluation on SWE-bench Verified (500 instances, original never-refined test suites):
 
-<h5 align="center"> If you like our project, please give us a star ⭐ on GitHub for the latest update.</h5>
+| Model | Resolve (%) | Median tokens (resolved) |
+|---|---:|---:|
+| SWE-Master 4B-SFT (initial checkpoint) | 25.4 | 18,754 |
+| SWE-Master 4B-RL (binary reward) | 27.2 | 18,849 |
+| RL with Test Selection | 26.4 | **18,113** |
+| RL with Predefined Tests | 26.8 | 18,843 |
+| Dynamic Refinement (Reward Band) | 27.8 | 18,458 |
+| Dynamic Refinement (Reward Trend) | **28.2** | 18,493 |
 
-<p align="center">
-  <img src="./assets/make_figure_merge.png" width="950" alt="overall"/>
-</p>
+Quality of 2,071 tests before and after refinement:
 
-# ✨ News
-+ [24 Feb 2026] We have open-sourced the training and inference code, as well as all associated models for [**SWE-Master**](https://arxiv.org/abs/2503.05592). Start training and evaluating your own code agents!
-+ [4 Feb 2026] ⚡️⚡️ [**SWE-Master**](https://arxiv.org/abs/2503.05592): We introduce SWE-Master, a fully reproducible post-training framework for Qwen2.5-Coder-32B that integrates agentic SFT and RL to achieve 61.4% (Pass@1) and 70.8% (TTS@8) resolve rates on SWE-bench Verified. Meanwhile, the framework incorporates IDE-level capabilities during inference via LSP-driven tool.
-+ [4 Feb 2026] ⚡️⚡️ [**SWE-World**](https://arxiv.org/pdf/2602.03419): We introduce SWE-World, a fully Docker-free framework that replaces physical execution environments with learned surrogates. It lifts Qwen2.5-Coder-32B from 6.2% to 55.0% on SWE-bench Verified via agentic SFT and RL, and further attains 68.2% through test-time scaling (TTS@8).
+| Metric | Original | Refined |
+|---|---:|---:|
+| Mutation score | 62.4% | 67.7% |
+| Line coverage | 78.5% | 80.2% |
+| Branch coverage | 66.5% | 68.2% |
 
-# 💡 Overview
+Unit-test validity on 239 held-out CodeContests problems (Qwen3-4B, CURE training framework):
 
-**SWE-Master** is an end-to-end, open-source post-training pipeline for software engineering (SWE) agents.   It covers **trajectory synthesis & curation**, **long-horizon supervised fine-tuning (SFT)**, **reinforcement learning with execution feedback (RLVR)**, and **test-time scaling (TTS)** via simulated verification and ranking. Furthermore, the framework supports advanced tool-use capabilities, including **LSP-integrated tools** (based on the Language Server Protocol), and incorporates a summary-based context manager for efficient state tracking.
+| Training configuration | Validity (%) |
+|---|---:|
+| Baseline | 83.7 |
+| RL with Test Selection | 85.7 |
+| Dynamic Refinement (Reward Trend) | **86.3** |
 
+## What this repository covers
 
-# 🤖 Models
-You can find all the trained models [**Here**](https://huggingface.co/collections/RUC-AIBOX/swe-agent-series), including:
-- [SWE-Master-4B-SFT](https://huggingface.co/RUC-AIBOX/SWE-Master-4B-SFT)
-- [SWE-Master-4B-RL](https://huggingface.co/RUC-AIBOX/SWE-Master-4B-RL)
-- [SWE-Master-32B-SFT](https://huggingface.co/RUC-AIBOX/SWE-Master-32B-SFT)
-- [SWE-Master-32B-RL](https://huggingface.co/RUC-AIBOX/SWE-Master-32B-RL)
-- [SWE-Master-32B-RL-LSP](https://huggingface.co/RUC-AIBOX/SWE-Master-32B-LSP)
+| Paper component | Where it lives |
+|---|---|
+| Dense reward (Eq. 2–3) | `ActiveTestScheduler.terminal_reward` in `R2E-Gym/src/r2egym/agenthub/runtime/active_tests.py` |
+| Test selection state machine (active / pool / cooldown, stall expansion) | `ActiveTestScheduler.tick` in the same file; unit tests in `test_active_tests.py` next to it |
+| Reward wiring into the RL environment | `DeepSWE_RL/rllm/rllm/environments/swe/swe_arsenal.py` |
+| Dynamic refinement with an agentic refiner (repository read and execute access, trajectory diversity filter, fail-on-buggy / pass-on-patched validation) | `R2E-Gym/src/r2egym/agenthub/runtime/agentic_refine.py` |
+| Dynamic refinement with a single-call API refiner | `R2E-Gym/src/r2egym/agenthub/runtime/online_refine.py` |
+| Offline refinement (predefined tests) | `test_to_openai_refiner.py`, `build_refined_dataset.py`, `build_decomposition_cache.py`, shared helpers in `R2E-Gym/src/r2egym/agenthub/runtime/test_refiner.py` |
+| Training launchers | `DeepSWE_RL/rllm/examples/swe/train_active_tests_swe_master_4b_h200.sh` (base launcher), `run_agentic_arm.sh`, `run_test_to_openai_arm.sh`, `agentic_orchestrator.sh` |
+| Log analysis and plotting | `analyze_*.py`, `dump_metrics_csv.py`, `plot_*.py`, `simulate_binary_baseline.py` |
 
+Not included in this snapshot:
 
-# ✨ Key Insights
-1. **Fully Post-Training Pipeline** WE-Master provides a transparent, end-to-end framework spanning trajectory synthesis, long-horizon SFT, and RL with execution feedback, demystifying how high-performance SWE capabilities emerge from open-source models.
-2. **Effective Test-Time Scaling (TTS) via Simulated Feedback**: Beyond simple repetition, we leverage LLM-based environment feedback for simulated verification and ranking. This strategy narrows the gap between Pass@1 and Pass@k, reaching a 70.8% resolve rate.
-3. **IDE-Level Semantic Navigation with LSP-Driven Tools**: By integrating Language Server Protocol (LSP) capabilities, SWE-Master replaces fragile text searches with deterministic tools (e.g., go-to-definition), significantly reducing search friction and enhancing interaction efficiency in complex codebases.
+- The run-level refinement triggers (reward band and reward trend). In this code, refinement is triggered per test, once a test has stayed unsolved for `RLLM_ACTIVE_TESTS_REFINE_AFTER` scheduler ticks.
+- The scripts that compute mutation score and line/branch coverage for original versus refined tests.
+- The CodeContests unit-test-generation experiments built on CURE.
+- The eight-GPU launch configuration used for the paper runs. The launcher here is the single-GPU version of the same pipeline (`trainer.n_gpus_per_node=1`); the GPU count, tensor-parallel size, and memory settings in it need to be raised for a multi-GPU node.
+- The full 800-instance training parquet. `data_examples/rl_data/` holds smaller subsets in the same format, and the build scripts below reproduce the format from public sources.
 
+## Repository layout
 
-# ✨ Training Recipe for SWE-Master
-## Data Curation and SFT
-We integrate multiple open-source SWE datasets packaged with Docker environments and generate rollouts with teacher models, then apply filtering to produce SFT-ready trajectories. The statistical metrics are shown below:
-
-| Dataset | Source | #Samples | #Images | #Repos | Resolved Inst. | Resolved Trajs. | Final SFT Trajs. |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| SWE-Gym | Real | 2,438 | 2,438 | 11 | 1,068 | 5,685 | 2,948 |
-| SWE-rebench | Real | 6,542 | 6,542 | 1,429 | 4,268 | 10,861 | 7,157 |
-| R2E-Gym | Synthetic | 4,578 | 4,578 | 10 | 3,234 | 18,398 | 2,462 |
-| SWE-smith | Synthetic | 14,103 | 114 | 114 | 6,353 | 17,901 | - |
-
-Additionally, we perform $N$ rollouts for each issue and utilize the average resolve rate as a proxy for task difficulty. As illustrated in the figure below, the resulting distribution exhibits a bimodal pattern, where the majority of issues are either consistently solved (trivial) or consistently failed (intractable). Consequently, we exclude these polar extremes from the candidate pool, selectively retaining only those issues that yield a mixture of successful and failed trajectories.
-
-<p align="center">
-  <img src="./assets/3_after_filter_data_bon_distribution.png" width="600" alt="overall"/>
-</p>
-
-## Reinforcement Learning
-
-We adopt Reinforcement Learning from Verifiable Rewards (RLVR) as our foundational framework, utilizing the Group Relative Policy Optimization (GRPO) algorithm to directly optimize SWE-Master-SFT. Drawing on established RL methodologies, we incorporate several empirical optimizations to enhance training stability and performance. The final objective function is formulated as follows (refer to the technical report for comprehensive details):
-
-$$
-\mathcal{J}(\theta) = \mathbb{E}_{q \sim P(Q), \{o_i\}_{i=1}^G \sim \pi_{\text{old}}} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{L_{\text{max}}} \sum_{t=1}^{|o_i|} \min \left( \rho_{i,t}(\theta) \hat{A}_i, \text{clip}\left(\rho_{i,t}(\theta), \beta_{\text{low}}, \beta_{\text{high}}\right) \hat{A}_i \right) \right]
-$$
-
-where $P(Q)$ denotes the distribution of input prompts, and the clipping bounds are defined as $\beta_{\text{low}} = 1-\varepsilon_{\text{low}}$ and $\beta_{\text{high}} = 1+\varepsilon_{\text{high}}$. The term $L_{\text{max}}$ represents a fixed constant for length normalization. The probability ratio $\rho_{i,t}(\theta)$ and the group-relative advantage $\hat{A}_i$ are given by:
-
-$$
-\rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}|q, o_{i,<t})}{\pi_{\text{old}}(o_{i,t}|q, o_{i,<t})}, \quad \hat{A}_i = R_i - \frac{1}{G-1}\sum_{j=1, j\neq i}^G R_j
-$$
-
-The training dynamics of RL are shown in the figure below.
-
-<p align="center">
-  <img src="./assets/1_main_rl_dynamic.png" width="750" alt="overall"/>
-</p>
-
-## Test-Time Scaling
-We implemente two primary paradigms for TTS: sequential scaling, which involves increasing the allowance of interaction turns; and parallel scaling, which generates multiple trajectories and corresponding patches, followed
-by employing a specific verifier to select the optimal candidate for submission. For parallel scaling, we use **SWE-World** as the verifier to choose the optimal patch.
-
-<p align="center">
-  <img src="./assets/1_tts.png" width="600" alt="overall"/>
-</p>
-
-# ✨ IDE-Level Code Capacity
-
-## Overview of LSP Tools
-The Language Server Protocol (LSP) is a standardized standard that decouples development tools from language-specific intelligence, enabling IDE-grade semantic insights such as cross-file reference tracking and symbol resolution. Inspired by human-IDE workflows, we implemented **`lsp_tool`**, which adapts the LSP specification into a function-calling format optimized for LLMs. This tool encapsulates repository navigation, dependency analysis, and code understanding into a unified API. By utilizing a specialized parser to handle the underlying JSON-RPC complexity, `lsp_tool` empowers agents with deterministic, semantics-aware navigation, bridging the gap between raw protocol data and model-driven code exploration.
-
-<p align="center">
-  <img src="./assets/lsp_pipeline.png" width="500" alt="overall"/>
-</p>
-
-## Case Study
-
-To explicitly demonstrate how `lsp_tool` empowers the model to transcend the limitations of lexical search, we present a comparative case study on **pydata_xarray-6812** from SWE-bench Verified. The task requires fixing a subtle bug where `.swap_dims()` incorrectly modifies the original dataset object in-place due to improper reference handling. 
-The figure below visualizes the contrasting trajectories between the current frontier framework, **OpenHands**, and our enhanced framework integrated with `lsp_tool`, and the detailed analysis is provided in the paper:
-
-
-<p align="center">
-  <img src="./assets/lsp_case.png" width="700" alt="overall"/>
-</p>
-
-
-
-# 🏃 Quick Start
-## Data Preparation
-### Data Download
-```bash
-bash ./data_preparation/download_swe_datasets.sh
+```
+DeepSWE_RL/rllm/          RL trainer (rLLM + verl), SWE environment, launch scripts
+R2E-Gym/                  Agent scaffold, Docker runtime, test scheduler, refiners
+OpenRLHF_SFT/             Supervised fine-tuning scripts inherited from the baseline (not used by the RL experiments)
+data_preparation/         Dataset download, difficulty filtering, test-spec generation
+data_examples/            Example RL parquets, inference data, and trajectories
+block_b_refinement/       Refinement caches
+build_*.py                Dataset builders (SWE-rebench / SWE-Gym subsets, refined datasets)
+run_*_arm.sh              Training launchers for the refinement configurations
 ```
 
-### Data Preprocessing (Optional)
-Add a prior difficulty grading to each issue. These grades are generated using Minimax-M2 and GLM-4.6.
-```bash
-# Add prior difficulty scores
-python ./data_preparation/difficulty_score_add.py
+## Setup
 
-# Filter for high-quality issues by removing those with consistently all-pass or all-fail rollouts based on difficulty scores
-python ./data_preparation/difficulty_score_filter.py
-```
-
-### Offline Unit Test Generation (Optional)
-Generate unit tests for `swe-gym`, `swebench-verified`, and `swe-rebench` to facilitate direct loading during evaluation. 
-This process generates two types of caches:
-1. JSON files for unit tests mapped to each `instance_id` within the specified `base_dir`.
-2. A dataset containing the `make_test_spec` field. 
-
-During inference, the system first checks if the dataset contains the `make_test_spec` field, then checks for the cached directory in the workspace. If neither is found, it reverts to the default loading method.
-
-**Note:** If `base_dir` is specified, you must update the corresponding `base_dir` in `./R2E-Gym/src/r2egym/agenthub/runtime/docker.py`.
+Requirements: Linux, Python 3.11, at least one 80 GB GPU (the paper runs used eight H100s), and a Docker daemon the training user can access (each rollout runs in a per-instance container).
 
 ```bash
-python ./data_preparation/make_test_spec.py \
-    --base_dir /your/custom/cache/path \
-    --data_file_path /your/path/to/data.json
-```
-
-For a completed conversion demo, refer to: `./data_examples/inference_data/ood_data`
-The corresponding unit tests cache is located at: `./data_examples/inference_data/ood_data_unit_tests_cache`
-
-## Inference & Evaluation
-
-### Environment Setup 
-
-```bash
-# Install uv
+# from the repository root
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
+uv venv --python 3.11 ../venv && source ../venv/bin/activate
 
-# Activate venv
-uv venv
-source .venv/bin/activate
-uv sync && uv pip install -e .
+uv pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.7.1 torchvision torchaudio
 
-# Install SWE dataset-related packages for inference
-uv pip install ./swebench_fork_swegym-2.0.13-py3-none-any.whl
+# verl (the fork the rLLM trainer expects), cloned inside the trainer directory
+git clone --depth 1 https://github.com/agentica-project/verl.git DeepSWE_RL/rllm/verl
+uv pip install -e DeepSWE_RL/rllm/verl
 
-uv pip install ./swebench_fork_swerebench-4.0.3-py3-none-any.whl
+uv pip install -e R2E-Gym
+uv pip install ./swebench_fork_swegym-2.0.13-py3-none-any.whl \
+               ./swebench_fork_swerebench-4.0.3-py3-none-any.whl \
+               ./swesmith-0.0.7-py3-none-any.whl
+uv pip install -e DeepSWE_RL/rllm --no-deps
 
-uv pip install ./swesmith-0.0.7-py3-none-any.whl
+uv pip install vllm==0.10.2
+uv pip install wheel packaging && uv pip install --no-build-isolation flash-attn==2.8.3
+uv pip install 'setuptools<81' 'transformers>=4.45,<5' 'huggingface_hub<1' tensorboard
 ```
 
-### Inference
-- We have built our project upon the [R2E-Gym](https://github.com/R2E-Gym/R2E-Gym) framework and conducted further development. **For parameter details, see [Parameter Description](./R2E-Gym/rollout_foundation_model/readme.md)**
+`build_env.sh` runs the same steps. `RL_ENV.txt` lists the full package set of the reference environment.
 
-#### Standard Inference
-```bash 
-# Batch generation
-bash ./R2E-Gym/rollout_foundation_model/run_deepseek_v3.sh
+The launch and helper scripts were written for a machine with the repository at `/home/temp/swemaster_runpod` and the virtual environment at `/home/temp/venv`, and several of them hard-code those paths. Either place (or symlink) the checkout and environment there, or replace the prefix in the scripts you use.
 
-# Debugging (e.g., verifying Docker connectivity and interaction workflows)
-bash ./R2E-Gym-opensource/run.py
-```
-
-#### Inference with LSP Tool
-```bash 
-# Standard inference with LSP-Tool integration
-bash ./R2E-Gym/rollout_foundation_model/lsp/run_deepseek_v3_lsp.sh
-
-# Few-shot configuration: used to prevent the policy model from over-relying on traditional tools during training (LSP-Tool is disabled here)
-bash ./R2E-Gym/rollout_foundation_model/lsp/run_minimax_lsp_few_shot.sh
-
-# Model-specific few-shot configurations are located here:
-ls ./R2E-Gym/rollout_foundation_model/lsp/swe_LSP_few_shot
-
-# Quality filtering for trajectories using LSP-Tool (Rule-based and LLM-based)
-bash ./R2E-Gym/rollout_foundation_model/lsp/sft_data_filter/batch_run_llm_judge.sh
-```
-
-#### Inference with Context Manager
-```bash 
-bash ./R2E-Gym/rollout_foundation_model/memory/run_deepseek_v3_memory.sh
-
-# Convert a single trajectory using context manager into multiple training trajectories
-python ./R2E-Gym/rollout_foundation_model/memory/sft_process_memory_data_01.py
-```
-
-
-#### Examples and Visualization
-
-A sample trajectory file generated after inference is available at:  
-`./data_examples/r2e-gym-inference-traj/glm46_0_used_swe_rebench_1_demo.jsonl`
-
-To facilitate a more intuitive and efficient analysis of the generated trajectories, you can use the following scripts to convert them into HTML format for visualization:
+Check the scheduler independently of the GPU stack:
 
 ```bash
-# Generate English visualization
-python ./R2E-Gym/app/json2html_for_view-en.py [jsonl-file-path] -o [html-file-path]
-
-# Generate Chinese visualization
-python ./R2E-Gym/app/json2html_for_view-zh.py [jsonl-file-path] -o [html-file-path]
+python -m pytest R2E-Gym/src/r2egym/agenthub/runtime/test_active_tests.py -v
 ```
 
-For the demo data provided, the corresponding visualized HTML files are located at:
-- **English version:** `./data_examples/r2e-gym-inference-traj/glm46_0_used_swe_rebench_1_demo-en.html`
-- **Chinese version:** `./data_examples/r2e-gym-inference-traj/glm46_0_used_swe_rebench_1_demo-zh.html`
+## Data
 
-
-### Reproducing SWE-Master Results
-Use the following scripts to reproduce the evaluation results for SWE-Master:
-```bash
-# Launch vLLM server
-bash ./R2E-Gym/rollout_trained_model/vllm_server_launch.sh
-
-# Run evaluation
-bash ./R2E-Gym/rollout_trained_model/qwen25_coder_15k_lsp_with_gerenal_04.sh
-```
-
-For Test-Time Scaling (TTS), we utilize [SWE-World](https://huggingface.co/RUC-AIBOX/SWE-World-SWR-32B-w-cot) as a verifier to perform candidate patch selection. Detailed methodology is available in the [original paper](https://arxiv.org/pdf/2602.03419), and the implementation can be found in the [SWE-World repository](https://github.com/RUCAIBox/SWE-World), with the TTS pipeline further documented in [`README.md`](https://github.com/RUCAIBox/SWE-World/blob/main/swe_world/src/simulation/tts/README.md).
-
-
-## SFT Training
-
-> [!IMPORTANT]
-> We utilize [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) as our framework for Supervised Fine-Tuning (SFT). It is an excellent open-source repository.
-
-> [!IMPORTANT]
-> Training was conducted on an internal platform with packages pre-installed in the environment image. The "Environment Setup" provided here aims to replicate our training environment as closely as possible. If you encounter issues, please open an **issue**, and we will investigate and resolve it promptly.
-
-
-### Environment Setup 
-
-The packages required for the training environment are listed below and can be downloaded as needed:
+Training uses 800 issue-resolution instances from 706 repositories: 700 from SWE-rebench and 100 from SWE-Gym. Each instance has at least one fail-to-pass test, one pass-to-pass test, a reference patch, and a runnable container image. SWE-rebench instances are filtered on issue specification and test validity, with a 25% / 50% / 25% easy / medium / hard split, reference patches touching at most three files, and issue descriptions between 200 and 10,000 characters. Repositories that appear in SWE-bench Verified are excluded.
 
 ```bash
-cat ./SFT_ENV.txt
-```
+# download the source datasets
+bash ./data_preparation/download_swe_datasets.sh
 
-You can refer to the environment configuration provided by [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) for installation. If you are using Ray, ensure that the environment is configured uniformly across all nodes:
-```bash
-cd ./OpenRLHF_SFT
-uv venv --python 3.11
-source .venv/bin/activate
-git clone https://github.com/OpenRLHF/OpenRLHF.git
-cd OpenRLHF
-pip install -e .
-```
+# optional: attach difficulty scores and filter on them
+python ./data_preparation/difficulty_score_add.py
+python ./data_preparation/difficulty_score_filter.py
 
-### Data Processing (Optional)
-You can directly process the trajectories generated via inference using the R2E-Gym framework by running the following scripts. This will convert them into an SFT-compatible format and apply necessary filtering:
-```bash
-python ./OpenRLHF_SFT/SFT_data_pre_process/r2e_to_openrlhf_format/0_covert_r2e_format_to_sft_foramt.py
-
-python ./OpenRLHF_SFT/SFT_data_pre_process/r2e_to_openrlhf_format/1_init_format_filter.py
-```
-
-Similarly, you can sequentially run the scripts in the directory below to obtain Best-of-N (BoN) statistics. Note that the prior BoN-based difficulty grading introduced in [earlier section](#data-preprocessing-optional) was generated using the code within this directory:
-`./OpenRLHF_SFT/SFT_data_pre_process/bon_filter`
-
-
-An example of SFT data is provided here for formatting reference: 
-`./data_examples/sft_data`
-
-### Training
-
-```bash
-# Pre-tokenize multi-turn interaction trajectories and compute loss masks (Optional, but recommended to avoid training bottlenecks)
-# Directly embeds function descriptions into the system prompt
-python ./OpenRLHF_SFT/scripts_swe_master/sft_data_pre_tokenize.py 
-
-# Train the model to support tool_calls
-python ./OpenRLHF_SFT/scripts_swe_master/sft_data_pre_tokenize_toolcall.py 
-
-# Optional: This step is required if you pre-tokenized the multi-turn data in the previous steps
-mv ./OpenRLHF_SFT/scripts_swe_master/sft_dataset.py ./OpenRLHF_SFT/datasets/ 
-
-# Launch training
-bash ./OpenRLHF_SFT/scripts_swe_master/qwen_25_coder_32B_new_remove_01_not_dedep.sh
-```
-
-## RL Training
-
-> [!IMPORTANT]
-> Our development is built upon the open-source frameworks [DeepSWE](https://github.com/agentica-project/rllm) and [rLLM](https://github.com/rllm-org/rllm), both of which are highly recommended repositories.
-
-> [!IMPORTANT]
-> Training was conducted on an internal platform with packages pre-installed in the environment image. The "Environment Setup" provided here aims to replicate our training environment as closely as possible. If you encounter issues, please open an **issue**, and we will investigate and resolve it promptly.
-
-
-### Environment Setup 
-
-The packages required for the training environment are listed below and can be downloaded as needed:
-
-```bash
-cat ./RL_ENV.txt
-```
-
-You can refer to the environment configurations provided by [DeepSWE](https://github.com/agentica-project/rllm) and [rLLM](https://github.com/rllm-org/rllm) for installation. If you are using Ray, ensure that the environment is configured uniformly across all nodes:
-```bash
-cd ./DeepSWE_RL/rllm
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -e .
-git clone https://github.com/verl-project/verl.git # We use version v0.5
-uv pip install -e ./verl
-```
-
-Additionally, you must update the local paths for VeRL and R2E-Gym (corresponding to the training and inference frameworks, respectively) in the following file:
-- Update the paths corresponding to the two `sys.path.insert` functions within `train_agent` in: `./DeepSWE_RL/rllm/rllm/trainer/verl/train_agent_ppo.py`
-
-Furthermore, to support training across different SWE datasets, you must ensure the relevant dataset libraries are installed when initializing Ray via the `run_ppo_agent` function in `./DeepSWE_RL/rllm/rllm/trainer/verl/train_agent_ppo.py` (Alternatively, these can be pre-installed during the initial environment setup).
-
-### Data Processing (Optional)
-If your training server operates in an offline environment (no internet access), you must [pre-process the unit tests for the specific SWE datasets](#offline-unit-test-generation-optional) and then standardize their formats:
-```bash
-# Standardize the format
+# embed test specs so the runtime needs no network access during training
+python ./data_preparation/make_test_spec.py --base_dir /path/to/cache --data_file_path /path/to/data.json
 python ./data_preparation/make_test_spec_for_rl.py
 ```
 
-An example of processed data ready for RL training can be found here for formatting reference: 
-`./data_examples/rl_data/ood_data`
+`build_comprehensive_swerebench.py` builds a training parquet directly from the public SWE-rebench release, keeping only instances whose images exist on Docker Hub. It has absolute paths near the top that need to point at your checkout. Pre-pull the container images before training (`prepull_parquet_images.sh`) so rollouts do not stall on downloads.
 
-### Training
+The trainer reads `train_00000_verl.parquet` / `test_00000_verl.parquet` pairs; see `data_examples/rl_data/` for examples.
+
+## Training
+
+All configurations go through one base launcher, `DeepSWE_RL/rllm/examples/swe/train_active_tests_swe_master_4b_h200.sh`, which reads its settings from environment variables. Set the common ones once:
+
 ```bash
-bash ./DeepSWE_RL/rllm/examples/swe/swe_rl_debug_hls_try_arsenal_long_step_and_long_time.sh
+export MODEL_PATH=/path/to/SWE-Master-4B-SFT          # initial supervised checkpoint
+export BASE_MODEL=$MODEL_PATH                         # the run_*_arm.sh wrappers read this name
+export TRAIN_PARQUET=/path/to/train_00000_verl.parquet
+export VAL_PARQUET=/path/to/test_00000_verl.parquet
+
+# paper setting: 16 instances x 4 trajectories per step, 200 optimizer steps, 150-turn episodes
+export TRAIN_BATCH_SIZE=16 PPO_MINI_BATCH_SIZE=16 TOTAL_TRAINING_STEPS=200 TOTAL_EPOCHS=40
+export AGENT_MAX_STEPS=150 TRAJECTORY_TIMEOUT=5400 MAX_RESPONSE=24576
 ```
 
-# Acknowledgements
-- Our work builds upon several outstanding open-source repositories, including [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF), [R2E-Gym](https://github.com/R2E-Gym/R2E-Gym), [VeRL](https://github.com/verl-project/verl), [DeepSWE](https://github.com/agentica-project/rllm) and [rLLM](https://github.com/rllm-org/rllm). We are sincerely grateful to the authors for making their high-quality training code available to the community.
-- This work was conducted at the [BOSS Zhipin Nanbeige Lab](https://huggingface.co/Nanbeige). We would like to express our gratitude to the company for providing the necessary computing resources and professional guidance.
+Then launch one of the configurations:
 
+```bash
+LAUNCH=DeepSWE_RL/rllm/examples/swe/train_active_tests_swe_master_4b_h200.sh
 
-# 📄 Citation
-Please kindly cite our report if they are helpful for your research.
+# 1) Binary-reward RL baseline
+EXPERIMENT_NAME=binary RLLM_ACTIVE_TESTS_ENABLED=0 bash $LAUNCH
 
-```bibtex
-@misc{song2026swemasterunleashingpotentialsoftware,
-      title={SWE-Master: Unleashing the Potential of Software Engineering Agents via Post-Training}, 
-      author={Huatong Song and Lisheng Huang and Shuang Sun and Jinhao Jiang and Ran Le and Daixuan Cheng and Guoxin Chen and Yiwen Hu and Zongchao Chen and Wayne Xin Zhao and Yang Song and Tao Zhang and Ji-Rong Wen},
-      year={2026},
-      eprint={2602.03411},
-      archivePrefix={arXiv},
-      primaryClass={cs.SE},
-      url={https://arxiv.org/abs/2602.03411}, 
-}
+# 2) Dense reward + test selection, no refinement
+EXPERIMENT_NAME=selection RLLM_ACTIVE_TESTS_ENABLED=1 bash $LAUNCH
+
+# 3) Predefined tests: refine offline, then train with (2) on the refined parquet.
+#    The refiner reads failed trajectories dumped by an earlier run launched with
+#    RLLM_DUMP_TRAJ_DIR=/path/to/dumps, and an API key from API_KEY_OPENAI (env or .env).
+python test_to_openai_refiner.py --dump-dir /path/to/dumps --train-parquet "$TRAIN_PARQUET" \
+    --out block_b_refinement/cache/refinements_test_to_openai.jsonl
+python build_refined_dataset.py --src /path/to/original_dataset_dir \
+    --cache block_b_refinement/cache/refinements_test_to_openai.jsonl --out /path/to/refined_dataset_dir
+EXPERIMENT_NAME=predefined RLLM_ACTIVE_TESTS_ENABLED=1 \
+  TRAIN_PARQUET=/path/to/refined_dataset_dir/train_00000_verl.parquet bash $LAUNCH
+
+# 4) Dynamic refinement with the agentic refiner: validated refined tests replace the stalled test
+EXPERIMENT_NAME=dynamic bash run_agentic_arm.sh
+
+# 4b) Dynamic refinement with a single API call per stalled test
+EXPERIMENT_NAME=dynamic_api RLLM_ACTIVE_TESTS_REFINE=1 RLLM_ACTIVE_TESTS_ONLINE_REFINE=1 \
+  bash run_test_to_openai_arm.sh
 ```
-# 📄 License
 
-This project is released under the [MIT License](LICENSE).
+Notes:
 
-# 📞 Contact
+- `run_agentic_arm.sh` drives a headless coding-agent CLI as the refiner; point `RLLM_AGENTIC_CLAUDE_BIN` at the binary. `RLLM_AGENTIC_REFINE_MODEL` selects the refiner model.
+- With test selection enabled, the active test identifiers are appended to the task instruction (`swe_arsenal.py`).
+- `prepull_parquet_images.sh <parquet>` pulls every container image a parquet references.
+- `agentic_orchestrator.sh` wraps a long run with relaunch-on-failure and a final export to a Hugging Face model directory.
+- Checkpoints are written under `/home/temp/training_outputs/<PROJECT_NAME>/<EXPERIMENT_NAME>/`.
 
-For any questions or feedback, please reach out to us at [songhuatong123@ruc.edu.cn](songhuatong123@ruc.edu.cn).
+### Reward and scheduler settings
 
+All settings are environment variables read in `swe_arsenal.py`. Paper symbols are from Eq. 2–3 and Section III-D.
+
+| Variable | Symbol | Default | Meaning |
+|---|---|---|---|
+| `RLLM_ACTIVE_TESTS_ENABLED` | – | 1 | 0 restores the binary reward |
+| `RLLM_ACTIVE_TESTS_W_SOLVE` | w_s | 5.0 | Weight on the fraction of target tests passed |
+| `RLLM_ACTIVE_TESTS_W_REGRESS` | w_r | w_s / 2 | Weight on the fraction of regression tests broken |
+| `RLLM_ACTIVE_TESTS_LAM_TOKEN` | λ | 0.1 | Token penalty weight |
+| `RLLM_ACTIVE_TESTS_TOKEN_REF` | T_ref | 32000 | Token normalization constant |
+| `RLLM_ACTIVE_TESTS_TOKEN_PENALTY_CAP` | c | 3.0 | Upper bound on the normalized token term |
+| `RLLM_ACTIVE_TESTS_M_INIT` / `_M_MAX` | m_init / m_max | 2 / 6 | Bounds on the active set size |
+| `RLLM_ACTIVE_TESTS_K` | k | 5 | Stall window before expansion |
+| `RLLM_ACTIVE_TESTS_EXPAND` | – | 2 | Tests promoted from the pool per stall expansion |
+| `RLLM_ACTIVE_TESTS_COOLDOWN` | – | 10 | Cooldown length before a passed test is re-checked |
+| `RLLM_ACTIVE_TESTS_MID_EPISODE` | – | 0 | 1 runs the tests every k agent steps and adds per-tick shaping terms (`ALPHA`, `BETA`, `DELTA`, `GAMMA`, `ETA`) |
+| `RLLM_ACTIVE_TESTS_REFINE_AFTER` | – | 2 (refinement wrappers) | Ticks a test must stay unsolved before it is refined |
+| `RLLM_ACTIVE_TESTS_REFINE_MAX` | – | 4 | Maximum tests produced when one test is decomposed |
+| `RLLM_AGENTIC_MAX_TRAJ` / `RLLM_AGENTIC_TRAJ_DIVERSITY` | – | 3 / 0.30 | Number of failed trajectories given to the refiner, and the minimum dissimilarity for one to be included |
+
+### Monitoring
+
+```bash
+# the launcher logs to stdout; redirect it to a file, e.g. `bash $LAUNCH > train.log 2>&1`
+grep -aoE 'critic/rewards/mean:-?[0-9.]+' train.log | tail   # reward per step
+python analyze_active_tests.py train.log                     # per-step reward breakdown
+python dump_metrics_csv.py train.log metrics.csv             # per-step CSV for plotting
+```
+
+## Evaluation on SWE-bench Verified
+
+Evaluation uses the original SWE-bench Verified tests; refined tests are never used here.
+
+```bash
+# export the final checkpoint to a Hugging Face model directory
+bash export_to_hf.sh /path/to/experiment_dir /path/to/exported_model
+
+# serve it (set MODEL_NAME inside the script)
+bash ./R2E-Gym/rollout_trained_model/vllm_server_launch.sh
+
+# run the agent on the 500 instances (set the dataset path and server address inside the script)
+bash ./R2E-Gym/rollout_trained_model/qwen25_coder_15k_lsp_with_gerenal_04.sh
+```
+
+Resolve rate and token usage are computed from the trajectory files written to `--traj_dir`.
+
+## Acknowledgements
+
+This code builds on several open-source projects: [SWE-Master](https://arxiv.org/abs/2602.03411), [R2E-Gym](https://github.com/R2E-Gym/R2E-Gym), [rLLM / DeepSWE](https://github.com/agentica-project/rllm), [verl](https://github.com/verl-project/verl), and [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF). Training data comes from SWE-rebench and SWE-Gym, and evaluation uses SWE-bench Verified.
+
+## License
+
+Released under the [MIT License](LICENSE).
