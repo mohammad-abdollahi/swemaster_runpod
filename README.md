@@ -10,35 +10,6 @@ This repository contains the code for the repository-level program repair experi
 
 The implementation builds on the public SWE-Master RL pipeline (reference [3] in the paper) and its underlying open-source frameworks. The model initialization, optimizer, agent scaffold, tools, and verifier execution pipeline are inherited from that baseline; the changes in this repository are on the reward and verification side.
 
-## Results reported in the paper
-
-Held-out evaluation on SWE-bench Verified (500 instances, original never-refined test suites):
-
-| Model | Resolve (%) | Median tokens (resolved) |
-|---|---:|---:|
-| SWE-Master 4B-SFT (initial checkpoint) | 25.4 | 18,754 |
-| SWE-Master 4B-RL (binary reward) | 27.2 | 18,849 |
-| RL with Test Selection | 26.4 | **18,113** |
-| RL with Predefined Tests | 26.8 | 18,843 |
-| Dynamic Refinement (Reward Band) | 27.8 | 18,458 |
-| Dynamic Refinement (Reward Trend) | **28.2** | 18,493 |
-
-Quality of 2,071 tests before and after refinement:
-
-| Metric | Original | Refined |
-|---|---:|---:|
-| Mutation score | 62.4% | 67.7% |
-| Line coverage | 78.5% | 80.2% |
-| Branch coverage | 66.5% | 68.2% |
-
-Unit-test validity on 239 held-out CodeContests problems (Qwen3-4B, CURE training framework):
-
-| Training configuration | Validity (%) |
-|---|---:|
-| Baseline | 83.7 |
-| RL with Test Selection | 85.7 |
-| Dynamic Refinement (Reward Trend) | **86.3** |
-
 ## What this repository covers
 
 | Paper component | Where it lives |
